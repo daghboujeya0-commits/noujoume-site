@@ -571,14 +571,60 @@ const firebaseConfig = {
   messagingSenderId: "697003109006",
   appId: "1:697003109006:web:8bd7555b69a1b6177e37df"
 };
-firebase.initializeApp(firebaseConfig);
-const fbAuth = firebase.auth();
-const fbDb = firebase.firestore();
-/* Corrige l'erreur "client is offline" qui apparaît quand le réseau (proxy, pare-feu
-   scolaire/entreprise, extension...) bloque la connexion de streaming habituelle de
-   Firestore : on lui fait détecter automatiquement le problème et basculer sur du
-   long-polling (HTTP classique), plus compatible avec ces réseaux restrictifs. */
-fbDb.settings({ experimentalAutoDetectLongPolling: true, merge: true });
+
+/* Initialisation défensive : si les scripts Firebase (chargés depuis gstatic.com) ne se
+   sont pas chargés à temps (réseau lent, extension, pare-feu), on évite de planter avec
+   une erreur technique cryptique ("Cannot access 'fbAuth' before initialization") et on
+   affiche à la place un message clair, compréhensible, avec un bouton pour réessayer. */
+let fbAuth = null;
+let fbDb = null;
+let firebaseReady = false;
+let firebaseInitError = null;
+
+function initFirebase(){
+  try{
+    if(typeof firebase === 'undefined'){
+      throw new Error("La librairie Firebase (gstatic.com) ne s'est pas chargée. Vérifie ta connexion internet.");
+    }
+    if(!firebase.apps || !firebase.apps.length){
+      firebase.initializeApp(firebaseConfig);
+    }
+    fbAuth = firebase.auth();
+    fbDb = firebase.firestore();
+    /* Corrige l'erreur "client is offline" qui apparaît quand le réseau (proxy, pare-feu
+       scolaire/entreprise, extension...) bloque la connexion de streaming habituelle de
+       Firestore : on lui fait détecter automatiquement le problème et basculer sur du
+       long-polling (HTTP classique), plus compatible avec ces réseaux restrictifs. */
+    fbDb.settings({ experimentalAutoDetectLongPolling: true, merge: true });
+    firebaseReady = true;
+    firebaseInitError = null;
+    const banner = document.getElementById('firebaseLoadError');
+    if(banner) banner.remove();
+  }catch(err){
+    firebaseReady = false;
+    firebaseInitError = err;
+    console.error('Échec du chargement de Firebase :', err);
+    showFirebaseLoadError(err);
+  }
+}
+
+function showFirebaseLoadError(err){
+  const zone = document.getElementById('authStatusZone');
+  if(!zone) return;
+  zone.innerHTML = '<div class="feedback-card" id="firebaseLoadError">' +
+    '⚠️ Le service de connexion (Firebase) ne s\'est pas chargé correctement. ' +
+    'Vérifie ta connexion internet, désactive un éventuel bloqueur de pub/VPN, puis ' +
+    '<a href="#" onclick="retryFirebaseInit(); return false;" style="color:inherit; text-decoration:underline; font-weight:600;">réessaie</a>.' +
+    '<br><span style="font-size:11px; opacity:0.8;">Détail technique : ' + escapeHTML(err && err.message ? err.message : String(err)) + '</span></div>';
+}
+
+function retryFirebaseInit(){
+  const zone = document.getElementById('authStatusZone');
+  if(zone) zone.innerHTML = '<div class="loading"><div class="spinner"></div>Nouvelle tentative...</div>';
+  setTimeout(initFirebase, 300);
+}
+
+initFirebase();
 let currentUserId = null;
 
 function defaultProfileData(){
@@ -601,6 +647,7 @@ function emailToDocId(email){
    identifiant de document). Ça permet de tester la plateforme même si l'authentification
    par e-mail/mot de passe ou Google ne fonctionne pas encore sur ce nouveau domaine Netlify. */
 async function handleEmailAuth(){
+  if(!firebaseReady){ showFirebaseLoadError(firebaseInitError || new Error('Firebase indisponible')); return; }
   const email = document.getElementById('authEmail').value.trim();
   const zone = document.getElementById('authStatusZone');
   if(!email){ zone.innerHTML = '<div class="feedback-card">Indique ton adresse e-mail.</div>'; return; }
@@ -639,6 +686,7 @@ function errorDetailHTML(err, introText){
 }
 
 async function handleGoogleAuth(){
+  if(!firebaseReady){ showFirebaseLoadError(firebaseInitError || new Error('Firebase indisponible')); return; }
   const zone = document.getElementById('authStatusZone');
   zone.innerHTML = '<div class="loading"><div class="spinner"></div>Connexion avec Google...</div>';
   try{
@@ -652,7 +700,7 @@ async function handleGoogleAuth(){
 }
 
 function handleLogout(){
-  fbAuth.signOut();
+  if(fbAuth) fbAuth.signOut();
   document.getElementById('sidebar').style.display = 'none';
   document.getElementById('streakBadge').style.display = 'none';
   document.getElementById('bearWidget').classList.add('hidden');
@@ -1873,6 +1921,7 @@ function triggerSnowfall(){
    résultat exact au lieu de rester sur "erreur" sans détail. */
 async function testAIConnection(){
   const zone = document.getElementById('aiTestZone');
+  if(!firebaseReady){ zone.innerHTML = '<div class="feedback-card">⚠️ Firebase ne s\'est pas chargé, impossible de tester l\'IA pour l\'instant. Recharge la page.</div>'; return; }
   zone.innerHTML = '<div class="loading"><div class="spinner"></div>Test en cours...</div>';
   try{
     if(!fbAuth.currentUser){
@@ -1888,6 +1937,7 @@ async function testAIConnection(){
 }
 
 async function callClaudeRaw(systemPrompt, messages){
+  if(!firebaseReady || !fbAuth){ const e = new Error("Firebase ne s'est pas chargé correctement."); e.code = 'app/firebase-not-ready'; throw e; }
   const user = fbAuth.currentUser;
   if(!user){ const e = new Error('Connecte-toi pour utiliser cette fonctionnalité.'); e.code = 'app/not-signed-in'; throw e; }
 
