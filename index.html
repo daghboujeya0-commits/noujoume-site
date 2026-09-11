@@ -654,11 +654,16 @@ async function handleEmailAuth(){
   if(!/^\S+@\S+\.\S+$/.test(email)){ zone.innerHTML = '<div class="feedback-card">Cette adresse e-mail ne semble pas valide.</div>'; return; }
   zone.innerHTML = '<div class="loading"><div class="spinner"></div>Connexion...</div>';
   try{
-    if(!fbAuth.currentUser){
-      await fbAuth.signInAnonymously();
+    let user = fbAuth.currentUser;
+    if(!user){
+      const cred = await fbAuth.signInAnonymously();
+      user = cred.user;
     }
-    const docId = emailToDocId(email);
-    await onAuthSuccess(docId, email);
+    /* IMPORTANT : les règles de sécurité Firestore exigent que l'ID du document
+       corresponde exactement à l'UID Firebase Auth de la session (request.auth.uid ==
+       userId). On utilise donc bien cet UID réel comme identifiant, et pas un ID
+       fabriqué à partir de l'e-mail (sinon Firestore refuse tout accès). */
+    await onAuthSuccess(user.uid, email);
   }catch(err){
     zone.innerHTML = errorDetailHTML(err, "Connexion impossible pour l'instant.");
     console.error('Erreur de connexion (auth anonyme / Firestore) :', err);
