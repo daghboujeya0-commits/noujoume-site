@@ -600,7 +600,7 @@ function initFirebase(){
        silencieusement par un pare-feu ou un antivirus qui inspecte le trafic, alors que
        de simples requêtes HTTPS classiques passent sans problème. Forcer ce mode évite
        même la tentative de connexion en streaming. */
-    fbDb.settings({ experimentalForceLongPolling: true, merge: true });
+    fbDb.settings({ experimentalForceLongPolling: true });
     firebaseReady = true;
     firebaseInitError = null;
     const banner = document.getElementById('firebaseLoadError');
