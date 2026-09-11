@@ -595,7 +595,12 @@ function initFirebase(){
        scolaire/entreprise, extension...) bloque la connexion de streaming habituelle de
        Firestore : on lui fait détecter automatiquement le problème et basculer sur du
        long-polling (HTTP classique), plus compatible avec ces réseaux restrictifs. */
-    fbDb.settings({ experimentalAutoDetectLongPolling: true, merge: true });
+    /* On force le long-polling (au lieu de le laisser en "auto-détection") : le
+       protocole de streaming habituel de Firestore semble être bloqué/perturbé
+       silencieusement par un pare-feu ou un antivirus qui inspecte le trafic, alors que
+       de simples requêtes HTTPS classiques passent sans problème. Forcer ce mode évite
+       même la tentative de connexion en streaming. */
+    fbDb.settings({ experimentalForceLongPolling: true, merge: true });
     firebaseReady = true;
     firebaseInitError = null;
     const banner = document.getElementById('firebaseLoadError');
