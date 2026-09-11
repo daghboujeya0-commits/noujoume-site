@@ -684,7 +684,7 @@ function errorDetailHTML(err, introText){
   } else if(code === 'permission-denied'){
     hint = "<br>➜ Les règles de sécurité Firestore bloquent cet accès (Firestore → Rules).";
   } else if(code === 'unavailable' || /offline/i.test(message)){
-    hint = "<br>➜ Le navigateur n'arrive pas à joindre Firestore. Deux causes possibles : (1) un réseau/pare-feu qui bloque sa connexion habituelle — on vient de corriger ça en forçant le long-polling, réessaie ; (2) aucune base Firestore n'a encore été créée dans ce projet Firebase (Firebase Console → Firestore Database → \"Créer une base de données\").";
+    hint = "<br>➜ On a déjà réessayé plusieurs fois automatiquement, donc ce n'est probablement pas un simple délai. Causes possibles : (1) aucune base Firestore n'a encore été créée dans ce projet Firebase (Firebase Console → Firestore Database → \"Créer une base de données\") ; (2) les règles de sécurité Firestore bloquent cet accès (vérifie qu'elles autorisent bien l'UID connecté) ; (3) un réseau/pare-feu qui bloque Firestore.";
   }
   return '<div class="feedback-card">' + introText +
     '<br><span style="font-size:11px; opacity:0.8;">Détail technique : ' + escapeHTML(code ? (code + ' — ' + message) : message) + '</span>' + hint + '</div>';
@@ -714,10 +714,29 @@ function handleLogout(){
   showScreen('screen-home');
 }
 
+/* Récupère un document avec 1-2 nouvelles tentatives en cas d'erreur "unavailable" :
+   juste après une connexion, Firestore a parfois besoin d'un court instant pour finir
+   d'établir sa connexion authentifiée, et la toute première requête peut échouer avec
+   "client is offline" même si tout est correctement configuré. */
+async function getDocWithRetry(ref, attempts){
+  attempts = attempts || 3;
+  let lastErr;
+  for(let i = 0; i < attempts; i++){
+    try{
+      return await ref.get();
+    }catch(err){
+      lastErr = err;
+      if(err.code !== 'unavailable' || i === attempts - 1) throw err;
+      await new Promise(function(r){ setTimeout(r, 900 * (i + 1)); });
+    }
+  }
+  throw lastErr;
+}
+
 async function onAuthSuccess(uid, email){
   currentUserId = uid;
   const ref = fbDb.collection('users').doc(uid);
-  const snap = await ref.get();
+  const snap = await getDocWithRetry(ref);
   if(!snap.exists){
     const profile = defaultProfileData();
     profile.email = email || '';
