@@ -719,19 +719,53 @@ function handleLogout(){
   showScreen('screen-home');
 }
 
-/* Récupère un document avec 1-2 nouvelles tentatives en cas d'erreur "unavailable" :
-   juste après une connexion, Firestore a parfois besoin d'un court instant pour finir
-   d'établir sa connexion authentifiée, et la toute première requête peut échouer avec
-   "client is offline" même si tout est correctement configuré. */
-async function getDocWithRetry(ref, attempts){
+/* Passe par la fonction Netlify au lieu de parler directement à Firestore : le
+   navigateur de certains utilisateurs n'arrive pas à établir la connexion spéciale
+   qu'utilise le SDK Firestore, alors que de simples appels HTTPS (comme celui-ci)
+   passent normalement. */
+async function firestoreCall(action, path, data){
+  if(!firebaseReady || !fbAuth || !fbAuth.currentUser){
+    const e = new Error("Pas de session active."); e.code = 'app/not-signed-in'; throw e;
+  }
+  const idToken = await fbAuth.currentUser.getIdToken();
+  let response;
+  try{
+    response = await fetch('/.netlify/functions/firestoreProxy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ idToken: idToken, action: action, path: path, data: data })
+    });
+  }catch(netErr){
+    const e = new Error("Impossible de joindre le serveur (fonction Netlify injoignable).");
+    e.code = 'app/network-error';
+    throw e;
+  }
+  let json;
+  try{ json = await response.json(); }
+  catch(parseErr){
+    const e = new Error('Réponse du serveur illisible (status ' + response.status + ').');
+    e.code = 'app/bad-server-response';
+    throw e;
+  }
+  if(!response.ok){
+    const e = new Error(json.error || ('Erreur serveur (status ' + response.status + ').'));
+    e.code = json.code || ('app/http-' + response.status);
+    throw e;
+  }
+  return json;
+}
+
+/* Récupère un document avec 1-2 nouvelles tentatives en cas d'erreur réseau : juste
+   après une connexion, le tout premier appel réseau peut parfois échouer une fois. */
+async function getDocWithRetry(path, attempts){
   attempts = attempts || 3;
   let lastErr;
   for(let i = 0; i < attempts; i++){
     try{
-      return await ref.get();
+      return await firestoreCall('get', path);
     }catch(err){
       lastErr = err;
-      if(err.code !== 'unavailable' || i === attempts - 1) throw err;
+      if(err.code === 'permission-denied' || i === attempts - 1) throw err;
       await new Promise(function(r){ setTimeout(r, 900 * (i + 1)); });
     }
   }
@@ -740,15 +774,14 @@ async function getDocWithRetry(ref, attempts){
 
 async function onAuthSuccess(uid, email){
   currentUserId = uid;
-  const ref = fbDb.collection('users').doc(uid);
-  const snap = await getDocWithRetry(ref);
+  const snap = await getDocWithRetry('users/' + uid);
   if(!snap.exists){
     const profile = defaultProfileData();
     profile.email = email || '';
-    await ref.set(profile);
+    await firestoreCall('set', 'users/' + uid, profile);
     showScreen('screen-onboarding');
   } else {
-    const data = snap.data();
+    const data = snap.data;
     Object.assign(state, {
       domain:data.domain||'', domainDetail:data.domainDetail||'', language:data.language||'C',
       projectIdea:data.projectIdea||'', studentName:data.studentName||'',
@@ -758,9 +791,8 @@ async function onAuthSuccess(uid, email){
     earnedBadges = data.earnedBadges || [];
     sadakaMilestonesReached = data.sadakaMilestonesReached || 0;
     focusStats = data.focusStats || { totalSeconds:0, byDomain:{}, byCourse:{} };
-    const courseSnap = await ref.collection('courses').get();
-    state.courses = [];
-    courseSnap.forEach(function(d){ state.courses.push(Object.assign({ id:d.id }, d.data())); });
+    const courseList = await firestoreCall('list', 'users/' + uid + '/courses');
+    state.courses = (courseList.documents || []).map(function(d){ return d; });
 
     if(state.domain && bear.name){
       document.getElementById('sidebar').style.display = 'flex';
@@ -791,7 +823,7 @@ function showErrorToast(introText, err){
 /* Sauvegarde les champs du profil donnés dans Firestore (appel ponctuel, pas systématique à chaque frappe) */
 async function saveProfileToFirestore(fields){
   if(!currentUserId) return;
-  try{ await fbDb.collection('users').doc(currentUserId).update(fields); }
+  try{ await firestoreCall('update', 'users/' + currentUserId, fields); }
   catch(err){ console.error('Erreur de sauvegarde profil', err); showErrorToast('Sauvegarde du profil impossible.', err); }
 }
 
@@ -799,8 +831,8 @@ async function saveProfileToFirestore(fields){
 async function saveCourseToFirestore(courseData){
   if(!currentUserId) return null;
   try{
-    const ref = await fbDb.collection('users').doc(currentUserId).collection('courses').add(courseData);
-    return ref.id;
+    const result = await firestoreCall('add', 'users/' + currentUserId + '/courses', courseData);
+    return result.id;
   }catch(err){ console.error('Erreur de sauvegarde du cours', err); showErrorToast('Sauvegarde du cours impossible.', err); return null; }
 }
 
