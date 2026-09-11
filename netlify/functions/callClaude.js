@@ -89,7 +89,10 @@ exports.handler = async (event) => {
     }
  
     // 2) Appel réel à l'API Gemini (gratuite) — la clé reste ici, jamais visible côté navigateur
-    const geminiModel = 'gemini-flash-latest';
+    /* "gemini-flash-latest" pointe vers un modèle EXPÉRIMENTAL avec des limites de
+       débit très restrictives (donc les erreurs "haute demande" et les timeouts
+       fréquents) — on utilise à la place un modèle stable, rapide et peu coûteux. */
+    const geminiModel = 'gemini-3.5-flash-lite';
     const geminiBody = {
       contents: convertMessagesToGemini(messages),
       generationConfig: { maxOutputTokens: 1000 }
