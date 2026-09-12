@@ -123,6 +123,23 @@ exports.handler = async (event) => {
       return { statusCode: 200, body: JSON.stringify({ documents: docs }) };
     }
 
+    if (action === 'delete') {
+      let resp;
+      try {
+        resp = await fetchWithTimeout(BASE_URL + path, { method: 'DELETE', headers: authHeaders }, 8000);
+      } catch (netErr) {
+        return { statusCode: 502, body: JSON.stringify({ error: 'Impossible de joindre Firestore : ' + netErr.message, code: netErr.code === 'timeout' ? 'firestore/timeout' : 'firestore/network-error' }) };
+      }
+      if (!resp.ok && resp.status !== 404) {
+        let json = {};
+        try{ json = await resp.json(); }catch(e){}
+        const detail = (json && json.error && json.error.message) ? json.error.message : ('status ' + resp.status);
+        const code = resp.status === 403 ? 'permission-denied' : 'firestore/api-error';
+        return { statusCode: resp.status, body: JSON.stringify({ error: 'Firestore a refusé la suppression : ' + detail, code: code }) };
+      }
+      return { statusCode: 200, body: JSON.stringify({ success: true }) };
+    }
+
     if (action === 'set' || action === 'update') {
       let url = BASE_URL + path;
       if (action === 'update') {
