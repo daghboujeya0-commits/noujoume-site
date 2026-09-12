@@ -42,8 +42,8 @@
   .streak-badge .count-box{ background:#e5e1f3; border-radius:4px; padding:5px 12px; font-size:13px; min-width:24px; text-align:center; }
   .streak-badge .flame{font-size:18px;}
   .big-logo-wrap{ background:var(--content-white); display:flex; justify-content:center; align-items:center; padding:18px 0 26px; }
-  .big-logo-img{ height:260px; max-width:90%; width:auto; display:block; }
-  @media (max-width:480px){ .big-logo-img{ height:170px; } }
+  .big-logo-img{ height:440px; max-width:95%; width:auto; display:block; }
+  @media (max-width:480px){ .big-logo-img{ height:280px; } }
   .body-area{ display:flex; flex:1; background:var(--content-white); }
   .sidebar{ width:220px; background:var(--sidebar-lavender); padding:24px 18px; display:flex; flex-direction:column; gap:14px; }
   .sidebar-chip{ background:var(--content-white); border-radius:6px; padding:12px 14px; font-size:12px; color:var(--text-muted); }
@@ -530,7 +530,7 @@
 
       <!-- BEAR ADMIN -->
       <div class="screen" id="screen-bear-admin">
-        <h2>🐻 Espace administratif — phrases de l'ourson</h2>
+        <h2>🐻 Phrases de l'ourson</h2>
         <p class="subtitle">Modifie librement ce que dit l'ourson à chaque situation. Une phrase par ligne — l'ourson en choisira une au hasard à chaque fois. Toute nouvelle fonctionnalité (arbre de compétences, badges...) ajoutera automatiquement ses propres catégories ici.</p>
         <div id="bearAdminForm"></div>
         <div class="cta-center">
@@ -1300,7 +1300,6 @@ function playQuranEntry(idx){
 }
 
 function selectQuranEmotion(emotion){
-  stopQuranPlayback();
   currentQuranEmotion = emotion;
   renderQuranEntries();
 }
@@ -1741,7 +1740,6 @@ function goBearAdmin(){
     '<div id="bearAdminDomainFields" style="margin-top:12px;"></div></div>';
   document.getElementById('bearAdminDomainSelect').value = state.domain || Object.keys(DOMAIN_COLORS)[0];
   renderBearAdminDomainFields();
-  renderBearAdminMoodFields();
 
   document.getElementById('bearAdminSaved').innerHTML = '';
   showScreen('screen-bear-admin');
@@ -1759,24 +1757,6 @@ function renderBearAdminDomainFields(){
   }).join('');
 }
 
-function renderBearAdminMoodFields(){
-  let moodZone = document.getElementById('bearAdminMoodZone');
-  if(!moodZone){
-    moodZone = document.createElement('div');
-    moodZone.id = 'bearAdminMoodZone';
-    document.getElementById('bearAdminForm').parentNode.appendChild(moodZone);
-  }
-  moodZone.innerHTML = '<div style="border-top:1px dashed #e0c9d0; margin-top:10px; padding-top:16px;">' +
-    '<h3>Réponses de l\'ourson par humeur (page Mood)</h3>' +
-    '<p class="subtitle">Une par humeur, sinon ça retombe sur les phrases d\'amitié génériques.</p>' +
-    MOODS.map(function(m){
-      const existing = MOOD_MESSAGES_OVERRIDES[m.key] || [];
-      return '<div style="margin-bottom:14px;">' +
-        '<label style="font-size:12px; color:var(--text-muted); font-weight:600; display:block; margin-bottom:4px;">' + m.emoji + ' ' + escapeHTML(m.label) + '</label>' +
-        '<textarea id="bearAdminMood_' + m.key + '" style="min-height:70px;">' + escapeHTML(existing.join('\n')) + '</textarea></div>';
-    }).join('') + '</div>';
-}
-
 function saveBearAdmin(){
   Object.keys(BEAR_LINES).forEach(function(key){
     const raw = document.getElementById('bearAdmin_' + key).value;
@@ -1791,12 +1771,6 @@ function saveBearAdmin(){
     const raw = document.getElementById('bearAdminDomain_' + key).value;
     const lines = raw.split('\n').map(function(l){ return l.trim(); }).filter(function(l){ return l.length > 0; });
     BEAR_LINES_DOMAIN_OVERRIDES[domain][key] = lines; // tableau vide = retombe sur la phrase générique
-  });
-
-  MOODS.forEach(function(m){
-    const raw = document.getElementById('bearAdminMood_' + m.key).value;
-    const lines = raw.split('\n').map(function(l){ return l.trim(); }).filter(function(l){ return l.length > 0; });
-    MOOD_MESSAGES_OVERRIDES[m.key] = lines;
   });
 
   document.getElementById('bearAdminSaved').innerHTML = '<div class="feedback-card ok">Phrases enregistrées — l\'ourson les utilisera dès maintenant.</div>';
@@ -1860,18 +1834,27 @@ async function confirmBearName(){
 }
 
 let screenHistory = [];
-function showScreen(id, fromBack){
+function showScreen(id, fromBack, fromPopstate){
   const current = document.querySelector('.screen.active');
   if(!fromBack && current && current.id !== id){ screenHistory.push(current.id); }
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
   document.getElementById(id).classList.add('active');
   window.scrollTo(0,0);
   updateGlobalBackButton();
+  /* Ajoute une entrée dans l'historique du navigateur : ça permet aux flèches
+     précédent/suivant de Chrome de naviguer DANS le site plutôt que d'en sortir. */
+  if(!fromPopstate){
+    try{ history.pushState({ screen: id }, '', location.pathname); }catch(e){}
+  }
 }
+window.addEventListener('popstate', function(e){
+  const target = (e.state && e.state.screen) ? e.state.screen : 'screen-home';
+  if(screenHistory.length){ screenHistory.pop(); }
+  showScreen(target, true, true);
+});
 function goBack(){
   if(screenHistory.length === 0) return;
-  const prev = screenHistory.pop();
-  showScreen(prev, true);
+  history.back();
 }
 function updateGlobalBackButton(){
   const btn = document.getElementById('globalBackBtn');
