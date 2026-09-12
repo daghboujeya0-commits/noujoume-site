@@ -193,6 +193,8 @@
     border-radius:14px; overflow:hidden; box-shadow:0 6px 18px rgba(58,26,66,0.3);
     background:rgba(255,255,255,0.96); padding:10px;
   }
+  .quran-widget-close{ position:absolute; top:6px; right:8px; cursor:pointer; font-size:14px; font-weight:700; color:var(--text-muted); width:22px; height:22px; display:flex; align-items:center; justify-content:center; border-radius:50%; }
+  .quran-widget-close:hover{ background:#eee; color:var(--text-dark); }
   .quran-widget.hidden{display:none;}
   .quran-widget-label{ font-size:12px; font-weight:600; color:var(--text-dark); margin-bottom:6px; }
   .quran-widget button{ background:var(--pink-1); color:#fff; border-radius:6px; padding:6px 14px; font-size:12px; font-family:'Inter',sans-serif; font-weight:600; margin-top:6px; width:100%; }
@@ -246,6 +248,7 @@
     </div>
   </div>
   <div class="quran-widget hidden" id="quranWidget">
+    <div class="quran-widget-close" onclick="stopQuranPlayback()" title="Fermer">✕</div>
     <div class="quran-widget-label" id="quranWidgetLabel">🕌 Récitation</div>
     <div id="quranWidgetPlayer"></div>
     <button onclick="stopQuranPlayback()">⏹ Arrêter</button>
