@@ -302,7 +302,7 @@
         <div class="signup-box">
           <label style="font-size:12px; color:var(--text-muted); font-weight:600;">Votre adresse e-mail</label>
           <input type="email" id="authEmail" placeholder="ton.email@exemple.com">
-          <button class="btn-pink" onclick="handleEmailAuth()">Continuer</button>
+          <button class="btn-pink" onclick="handleEmailAuth()">Recevoir mon lien de connexion</button>
           <div class="divider-text">ou</div>
           <button class="btn-outline" onclick="handleGoogleAuth()">Continuer avec Google</button>
           <div id="authStatusZone"></div>
@@ -462,8 +462,11 @@
       <div class="screen" id="screen-execute">
         <h2>Ton programme assemblé (expérimental)</h2>
         <p class="subtitle">Cette étape essaie de fusionner tout l'historique du projet (tous les exercices + tous les Code Craft + le design) en un seul programme. Pour un petit projet ça marche bien ; pour un projet qui a beaucoup grossi, l'IA peut avoir du mal à tout inclure sans coupure. Le chemin recommandé et plus fiable est de terminer chaque cours directement depuis la page Code Craft (bouton "Terminer ce cours avec ce code").</p>
-        <div id="executeLoading"></div>
         <div id="executeInventoryZone"></div>
+        <label style="font-size:12px; color:var(--text-muted); font-weight:600;">Nouveau design à ajouter (optionnel) — laisse vide pour réutiliser simplement ce qui est déjà enregistré</label>
+        <textarea id="executeExtraDesign" placeholder="Décris ici un nouveau design/animation à intégrer en plus de ceux déjà sauvegardés..." style="min-height:70px;"></textarea>
+        <div class="cta-center" style="margin:10px 0;"><button class="btn-purple" onclick="runAssembly()">Lancer l'assemblage</button></div>
+        <div id="executeLoading"></div>
         <div id="executeCodeZone"></div>
         <div id="executePreviewZone"></div>
         <div class="row-gap">
@@ -547,6 +550,7 @@
         <h2>🌳 Arbre de compétences</h2>
         <p class="subtitle">Chaque feuille est un cours ajouté, avec sa propre couleur. Clique sur une feuille pour revoir son détail.</p>
         <div id="treeContainer" style="display:flex; justify-content:center;"></div>
+        <div id="treeAssembleZone"></div>
         <div class="cta-center">
           <button class="btn-outline" style="width:auto;" onclick="goCourses()">Voir en liste simple</button>
           <button class="btn-pink" onclick="showScreen('screen-day')">+ Ajouter un nouveau cours</button>
@@ -628,6 +632,7 @@ function initFirebase(){
     firebaseInitError = null;
     const banner = document.getElementById('firebaseLoadError');
     if(banner) banner.remove();
+    checkEmailLinkSignIn();
     checkGoogleRedirectResult();
   }catch(err){
     firebaseReady = false;
@@ -664,27 +669,46 @@ function defaultProfileData(){
   };
 }
 
-/* Connexion simplifiée, sans mot de passe : juste l'e-mail.
-   On s'appuie sur une session Firebase Anonyme (qui ne dépend pas des domaines
-   autorisés, contrairement à Google) pour que Firestore accepte les lectures/écritures.
-   L'UID Firebase Auth réel de cette session sert d'identifiant du profil. */
+/* Connexion par lien envoyé par e-mail (passwordless) : l'e-mail est maintenant la vraie
+   identité du compte (UID Firebase réel et stable), peu importe le domaine ou l'appareil
+   utilisé. Activé côté Firebase Console → Authentication → Sign-in method → Email link. */
 async function handleEmailAuth(){
   if(!firebaseReady){ showFirebaseLoadError(firebaseInitError || new Error('Firebase indisponible')); return; }
   const email = document.getElementById('authEmail').value.trim();
   const zone = document.getElementById('authStatusZone');
   if(!email){ zone.innerHTML = '<div class="feedback-card">Indique ton adresse e-mail.</div>'; return; }
   if(!/^\S+@\S+\.\S+$/.test(email)){ zone.innerHTML = '<div class="feedback-card">Cette adresse e-mail ne semble pas valide.</div>'; return; }
-  zone.innerHTML = '<div class="loading"><div class="spinner"></div>Connexion...</div>';
+  zone.innerHTML = '<div class="loading"><div class="spinner"></div>Envoi du lien de connexion...</div>';
   try{
-    let user = fbAuth.currentUser;
-    if(!user){
-      const cred = await fbAuth.signInAnonymously();
-      user = cred.user;
-    }
-    await onAuthSuccess(user.uid, email);
+    const actionCodeSettings = { url: window.location.href.split('#')[0].split('?')[0], handleCodeInApp: true };
+    await fbAuth.sendSignInLinkToEmail(email, actionCodeSettings);
+    window.localStorage.setItem('noujoumeEmailForSignIn', email);
+    zone.innerHTML = '<div class="feedback-card ok">📩 Un lien de connexion vient d\'être envoyé à <strong>' + escapeHTML(email) + '</strong>. Ouvre ta boîte mail (et regarde aussi dans les spams) et clique sur le lien pour continuer.</div>';
   }catch(err){
-    zone.innerHTML = errorDetailHTML(err, "Connexion impossible pour l'instant.");
-    console.error('Erreur de connexion (auth anonyme / Firestore) :', err);
+    zone.innerHTML = errorDetailHTML(err, "Impossible d'envoyer le lien de connexion.");
+    console.error('Erreur d\'envoi du lien de connexion :', err);
+  }
+}
+
+/* Au chargement de la page : si l'URL correspond à un lien de connexion cliqué depuis
+   l'e-mail, termine la connexion automatiquement. */
+async function checkEmailLinkSignIn(){
+  if(!fbAuth || !fbAuth.isSignInWithEmailLink(window.location.href)) return;
+  const zone = document.getElementById('authStatusZone');
+  let email = window.localStorage.getItem('noujoumeEmailForSignIn');
+  if(!email){
+    email = window.prompt('Confirme ton adresse e-mail pour terminer la connexion :');
+  }
+  if(!email) return;
+  if(zone) zone.innerHTML = '<div class="loading"><div class="spinner"></div>Connexion...</div>';
+  try{
+    const cred = await fbAuth.signInWithEmailLink(email, window.location.href);
+    window.localStorage.removeItem('noujoumeEmailForSignIn');
+    window.history.replaceState({}, document.title, window.location.pathname);
+    await onAuthSuccess(cred.user.uid, email);
+  }catch(err){
+    if(zone) zone.innerHTML = errorDetailHTML(err, "Le lien de connexion n'est plus valide, redemande-en un nouveau.");
+    console.error('Erreur de connexion par lien :', err);
   }
 }
 
@@ -2499,6 +2523,13 @@ function renderTree(){
   zone.innerHTML = svg + '<div class="subtitle" style="text-align:center; margin-top:8px;">' + courses.map(function(c,i){
     return '<span style="display:inline-block; margin:2px 6px; cursor:pointer;" onclick="openCourseDetail(' + i + ')"><span style="display:inline-block; width:9px; height:9px; border-radius:50%; background:' + LEAF_COLORS[i % LEAF_COLORS.length] + '; margin-right:4px;"></span>' + escapeHTML(c.name) + '</span>';
   }).join('') + '</div>';
+
+  const assembleZone = document.getElementById('treeAssembleZone');
+  if(assembleZone){
+    assembleZone.innerHTML = courses.length
+      ? '<div class="cta-center" style="margin-top:16px;"><button class="btn-purple" onclick="openExecuteScreen()">🧩 Assembler et exécuter tout le projet</button></div>'
+      : '';
+  }
 }
 
 /* ---------- DAY / EXERCISES ---------- */
@@ -2882,14 +2913,14 @@ async function verifyDesignAttempt(){
 }
 
 /* ---------- EXECUTE / ASSEMBLY ---------- */
-async function openExecuteScreen(){
+function openExecuteScreen(){
   showScreen('screen-execute');
   document.getElementById('executeCodeZone').innerHTML = '';
   document.getElementById('executePreviewZone').innerHTML = '';
-  document.getElementById('executeInventoryZone').innerHTML = '';
+  document.getElementById('executeLoading').innerHTML = '';
+  document.getElementById('executeExtraDesign').value = '';
   document.getElementById('executeHelpZone').innerHTML = helpBoxHTML('execute');
   state.translation = { targetLang:'', autoCode:'', studentCode:'', mistakes:[], correction:'', finalCode:'' };
-  const loading = document.getElementById('executeLoading');
 
   const hasDesign = !!state.design.sampleCode;
   const inventoryLines = state.projectCodeLog.map(function(p){ return '✓ ' + p.source; });
@@ -2898,14 +2929,20 @@ async function openExecuteScreen(){
   if(!hasDesign){
     document.getElementById('executeInventoryZone').innerHTML += '<div class="locked-msg">Aucun design n\'a été généré pour cette pièce — le programme sera assemblé sans lui. <button class="btn-blue btn-small" style="width:auto; margin-left:6px;" onclick="showScreen(\'screen-codecraft\')">Retourner ajouter un design</button></div>';
   }
+}
+
+async function runAssembly(){
+  const loading = document.getElementById('executeLoading');
+  const extraDesign = document.getElementById('executeExtraDesign').value.trim();
   loading.innerHTML = '<div class="loading"><div class="spinner"></div>Assemblage de ton programme complet...</div>';
 
   const validatedPieces = state.projectCodeLog.map(function(p){ return '// ' + p.source + '\n' + p.code; }).join('\n\n');
   const designPiece = state.design.validated ? ('// Design\n' + (state.design.correction || state.design.sampleCode)) : (state.design.sampleCode ? ('// Design (exemple)\n' + state.design.sampleCode) : '');
+  const extraDesignPiece = extraDesign ? ('\n\nNouveau design à intégrer en plus (décrit par l\'étudiant, à transformer en code ' + state.language + ' cohérent avec le reste) : ' + extraDesign) : '';
 
   const system = 'Tu es un ingénieur pédagogique qui assemble plusieurs morceaux de code ' + state.language + ' écrits séparément par un étudiant débutant en un seul programme complet, cohérent, avec un point d\'entrée unique qui relie toutes les fonctions logiquement. Réponds UNIQUEMENT avec le code final, sans explication, sans balises markdown.';
   const user = 'Langue : ' + state.language + '. Projet global : "' + state.projectIdea + '" (domaine : ' + state.domain + ').\n' +
-    'Voici les morceaux de code déjà validés par l\'étudiant, qui doivent être liés ensemble :\n' + validatedPieces + '\n' + designPiece + '\n\n' +
+    'Voici les morceaux de code déjà validés par l\'étudiant, qui doivent être liés ensemble :\n' + validatedPieces + '\n' + designPiece + extraDesignPiece + '\n\n' +
     'Assemble tout ceci en un seul programme ' + state.language + ' complet et cohérent, avec un point d\'entrée unique (main ou équivalent) qui appelle les fonctions de façon logique. Résous les conflits de noms si besoin.\n' +
     'IMPORTANT (ne rien raccourcir ni omettre) : reprends CHAQUE fonction fournie ci-dessus dans son intégralité, telle quelle, sans la résumer ni la condenser. Le programme final doit être AU MOINS aussi long que la somme des morceaux fournis (moins les doublons évidents comme deux #include identiques). N\'élimine jamais une fonction simplement parce qu\'elle semble moins liée au thème du jeu : trouve une façon logique de l\'intégrer (par exemple comme une nouvelle scène, un nouvel obstacle, une statistique affichée, une étape du menu). Chaque fonction fournie doit être réellement appelée au moins une fois quelque part dans le programme.\n' +
     'IMPORTANT (animation) : si une fonction d\'animation/design a été fournie (boucle, déplacement, affichage répété dans le temps), le point d\'entrée doit réellement l\'appeler et la faire tourner (plusieurs frames avec une pause entre chaque), pas seulement l\'inclure sans l\'utiliser.\n' +
@@ -2917,7 +2954,7 @@ async function openExecuteScreen(){
     loading.innerHTML = '';
     document.getElementById('executeCodeZone').innerHTML = state.assembledCode
       ? '<h3>Voici ton programme complet (copie-le si besoin) :</h3><div class="correction-box">' + escapeHTML(state.assembledCode) + '</div>'
-      : '<div class="feedback-card">Le code assemblé est vide, une erreur a dû se produire. Réessaie en cliquant sur "Assembler et exécuter" depuis le Code Craft.</div>';
+      : '<div class="feedback-card">Le code assemblé est vide, une erreur a dû se produire. Réessaie en cliquant sur "Lancer l\'assemblage".</div>';
     if(state.language === 'Algorithme'){
       renderTranslationUI();
     } else if(state.language === 'JavaScript'){
