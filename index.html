@@ -408,6 +408,16 @@
           <button class="btn-pink" onclick="generateExercises()">Ajouter</button>
         </div>
         <div id="dayLoading"></div>
+
+        <div class="cta-center" style="margin-top:14px;">
+          <button class="btn-blue" onclick="explainCourseWithStory()">💬 M'expliquer ce cours avec une histoire liée à mon domaine (<span id="storyDomainLabel">...</span>)</button>
+        </div>
+        <div id="courseStoryZone"></div>
+
+        <div class="cta-center" style="margin-top:14px;">
+          <button class="btn-outline" onclick="openRevisionPicker()">🧠 Grand exercice de révision (plusieurs cours)</button>
+        </div>
+        <div id="revisionPickerZone"></div>
       </div>
 
       <!-- EXERCISES LIST -->
@@ -1242,30 +1252,81 @@ let prayerTimes = null;
 let prayerTimesDate = null;
 let remindedToday = {};
 let prayerCheckInterval = null;
+let prayerCoords = null;
+let prayerLocationLabel = '';
 
 function enablePrayerReminders(){
   const zone = document.getElementById('prayerStatusZone');
   if(!navigator.geolocation){ zone.innerHTML = '<div class="feedback-card">La géolocalisation n\'est pas disponible sur cet appareil/navigateur.</div>'; return; }
   zone.innerHTML = '<div class="loading"><div class="spinner"></div>Récupération de ta position...</div>';
   navigator.geolocation.getCurrentPosition(async function(pos){
+    prayerCoords = { lat: pos.coords.latitude, lon: pos.coords.longitude };
     try{
-      const lat = pos.coords.latitude, lon = pos.coords.longitude;
-      const today = new Date();
-      const dateStr = String(today.getDate()).padStart(2,'0') + '-' + String(today.getMonth()+1).padStart(2,'0') + '-' + today.getFullYear();
-      const url = 'https://api.aladhan.com/v1/timings/' + dateStr + '?latitude=' + lat + '&longitude=' + lon + '&method=3';
-      const resp = await fetch(url);
-      const data = await resp.json();
-      const t = data.data.timings;
-      prayerTimes = { Fajr: t.Fajr.slice(0,5), Dhuhr: t.Dhuhr.slice(0,5), Asr: t.Asr.slice(0,5), Maghrib: t.Maghrib.slice(0,5), Isha: t.Isha.slice(0,5) };
-      prayerTimesDate = today.toDateString();
-      remindedToday = {};
-      zone.innerHTML = '<div class="feedback-card ok">Rappels activés pour aujourd\'hui :<br>Fajr ' + prayerTimes.Fajr + ' — Dhuhr ' + prayerTimes.Dhuhr + ' — Asr ' + prayerTimes.Asr + ' — Maghrib ' + prayerTimes.Maghrib + ' — Isha ' + prayerTimes.Isha + '</div>';
-      if(prayerCheckInterval){ clearInterval(prayerCheckInterval); }
-      prayerCheckInterval = setInterval(checkPrayerTime, 30000);
-    }catch(err){ zone.innerHTML = '<div class="feedback-card">Impossible de récupérer les horaires de prière pour l\'instant. Réessaie plus tard.</div>'; console.error(err); }
+      const geoResp = await fetch('https://nominatim.openstreetmap.org/reverse?format=json&lat=' + prayerCoords.lat + '&lon=' + prayerCoords.lon);
+      const geoData = await geoResp.json();
+      const a = geoData.address || {};
+      prayerLocationLabel = a.city || a.town || a.village || a.county || geoData.display_name || (prayerCoords.lat.toFixed(2) + ', ' + prayerCoords.lon.toFixed(2));
+    }catch(e){ prayerLocationLabel = prayerCoords.lat.toFixed(2) + ', ' + prayerCoords.lon.toFixed(2); }
+    await refreshPrayerTimesFromCoords();
   }, function(){
-    zone.innerHTML = '<div class="feedback-card">Localisation refusée ou indisponible — active-la dans les réglages de ton navigateur si tu changes d\'avis.</div>';
+    zone.innerHTML = '<div class="feedback-card">Localisation refusée ou indisponible — active-la dans les réglages de ton navigateur, ou <a href="#" onclick="showPrayerLocationEditor(); return false;" style="color:inherit; text-decoration:underline;">indique ta ville manuellement</a>.</div>';
   });
+}
+
+async function refreshPrayerTimesFromCoords(){
+  const zone = document.getElementById('prayerStatusZone');
+  zone.innerHTML = '<div class="loading"><div class="spinner"></div>Calcul des horaires de prière...</div>';
+  try{
+    const today = new Date();
+    const dateStr = String(today.getDate()).padStart(2,'0') + '-' + String(today.getMonth()+1).padStart(2,'0') + '-' + today.getFullYear();
+    const url = 'https://api.aladhan.com/v1/timings/' + dateStr + '?latitude=' + prayerCoords.lat + '&longitude=' + prayerCoords.lon + '&method=3';
+    const resp = await fetch(url);
+    const data = await resp.json();
+    const t = data.data.timings;
+    prayerTimes = { Fajr: t.Fajr.slice(0,5), Dhuhr: t.Dhuhr.slice(0,5), Asr: t.Asr.slice(0,5), Maghrib: t.Maghrib.slice(0,5), Isha: t.Isha.slice(0,5) };
+    prayerTimesDate = today.toDateString();
+    remindedToday = {};
+    renderPrayerStatus();
+    if(prayerCheckInterval){ clearInterval(prayerCheckInterval); }
+    prayerCheckInterval = setInterval(checkPrayerTime, 30000);
+  }catch(err){ zone.innerHTML = '<div class="feedback-card">Impossible de récupérer les horaires de prière pour l\'instant. Réessaie plus tard.</div>'; console.error(err); }
+}
+
+function renderPrayerStatus(){
+  const zone = document.getElementById('prayerStatusZone');
+  zone.innerHTML = '<div class="feedback-card ok">' +
+    '📍 <strong>' + escapeHTML(prayerLocationLabel || 'Position détectée') + '</strong> ' +
+    '<a href="#" onclick="showPrayerLocationEditor(); return false;" title="Corriger la localisation" style="text-decoration:none;">✏️</a>' +
+    '<br>Rappels activés pour aujourd\'hui :<br>Fajr ' + prayerTimes.Fajr + ' — Dhuhr ' + prayerTimes.Dhuhr + ' — Asr ' + prayerTimes.Asr + ' — Maghrib ' + prayerTimes.Maghrib + ' — Isha ' + prayerTimes.Isha +
+    '</div>';
+}
+
+function showPrayerLocationEditor(){
+  const zone = document.getElementById('prayerStatusZone');
+  zone.innerHTML = '<div class="feedback-card">' +
+    '<label style="font-size:12px; font-weight:600; color:var(--text-muted); display:block; margin-bottom:4px;">Corrige ta ville si la localisation détectée est fausse :</label>' +
+    '<input type="text" id="prayerCityInput" placeholder="Ex: Tunis, Sfax, Sousse..." value="' + escapeHTML(prayerLocationLabel || '') + '">' +
+    '<div class="row-gap" style="margin-top:6px;"><button class="btn-pink btn-small" style="width:auto;" onclick="searchPrayerCity()">Valider cette ville</button></div>' +
+    '<div id="prayerCitySearchStatus" style="margin-top:6px;"></div>' +
+    '</div>';
+}
+
+async function searchPrayerCity(){
+  const city = document.getElementById('prayerCityInput').value.trim();
+  const statusZone = document.getElementById('prayerCitySearchStatus');
+  if(!city){ statusZone.innerHTML = '<span style="font-size:12px; color:var(--pink-1);">Tape le nom d\'une ville.</span>'; return; }
+  statusZone.innerHTML = '<div class="loading"><div class="spinner"></div>Recherche...</div>';
+  try{
+    const resp = await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&q=' + encodeURIComponent(city));
+    const results = await resp.json();
+    if(!results.length){ statusZone.innerHTML = '<span style="font-size:12px; color:var(--pink-1);">Ville introuvable, vérifie l\'orthographe.</span>'; return; }
+    prayerCoords = { lat: parseFloat(results[0].lat), lon: parseFloat(results[0].lon) };
+    prayerLocationLabel = city;
+    await refreshPrayerTimesFromCoords();
+  }catch(err){
+    statusZone.innerHTML = '<span style="font-size:12px; color:var(--pink-1);">Erreur de recherche, réessaie.</span>';
+    console.error(err);
+  }
 }
 
 function checkPrayerTime(){
@@ -2535,11 +2596,101 @@ function renderTree(){
 }
 
 /* ---------- DAY / EXERCISES ---------- */
+/* Explique le cours (nom + résumé tapés) avec une histoire simple où les notions du
+   cours sont remplacées par des éléments du domaine préféré de l'étudiant. */
+async function explainCourseWithStory(){
+  const courseName = document.getElementById('courseNameInput').value.trim();
+  const courseResume = document.getElementById('courseResumeInput').value.trim();
+  const zone = document.getElementById('courseStoryZone');
+  if(!courseName){ zone.innerHTML = '<div class="feedback-card">Indique d\'abord le nom du cours ci-dessus.</div>'; return; }
+  zone.innerHTML = '<div class="loading"><div class="spinner"></div>Écriture de l\'histoire...</div>';
+  const system = "Tu es un professeur qui explique des notions techniques à un étudiant débutant à travers de petites histoires simples et imagées. Réponds en français, de façon concrète, chaleureuse et courte (250 mots maximum). Pas de markdown compliqué, juste du texte clair avec quelques paragraphes courts.";
+  const user = 'Cours à expliquer : "' + courseName + '"' + (courseResume ? (' — résumé : ' + courseResume) : '') + '.\n' +
+    'Le domaine préféré de l\'étudiant est : "' + state.domain + '"' + (state.domainDetail ? (' (' + state.domainDetail + ')') : '') + '.\n' +
+    'Explique ce cours à travers une petite histoire ou analogie simple où les éléments techniques du cours sont remplacés par des éléments concrets de ce domaine (par exemple, si le domaine est la cuisine, une boucle devient "répéter une recette plusieurs fois", une variable devient "un ingrédient qu\'on peut changer"...). L\'histoire doit rester courte, claire, et vraiment aider à comprendre la notion technique — pas juste raconter une histoire pour le plaisir.';
+  try{
+    const raw = await callClaude(system, user);
+    zone.innerHTML = '<div class="feedback-card ok" style="white-space:pre-wrap;">' + escapeHTML(raw) + '</div>' +
+      '<div class="cta-center" style="margin-top:8px;"><button class="btn-outline btn-small" style="width:auto;" onclick="explainCourseWithStory()">🔄 Une autre histoire</button></div>';
+  }catch(err){
+    zone.innerHTML = friendlyErrorHTML(err, "Impossible de générer l'histoire pour l'instant.");
+    console.error(err);
+  }
+}
+
+/* ---------- GRAND EXERCICE DE RÉVISION (plusieurs cours) ---------- */
+function openRevisionPicker(){
+  const zone = document.getElementById('revisionPickerZone');
+  if(!state.courses.length){
+    zone.innerHTML = '<div class="feedback-card">Tu n\'as pas encore de cours dans ton arbre — termine au moins un cours pour pouvoir faire une révision.</div>';
+    return;
+  }
+  const checkboxes = state.courses.map(function(c, i){
+    return '<label style="display:flex; align-items:center; gap:8px; padding:8px 10px; background:var(--content-white); border-radius:6px; margin-bottom:6px; cursor:pointer;">' +
+      '<input type="checkbox" class="revisionCourseCheck" value="' + i + '"> ' + escapeHTML(c.name) + '</label>';
+  }).join('');
+  zone.innerHTML = '<div class="statement-box">' +
+    '<strong>Choisis les cours à réviser ensemble :</strong>' +
+    '<div style="margin-top:8px;">' + checkboxes + '</div>' +
+    '<div class="cta-center" style="margin-top:10px;"><button class="btn-purple" onclick="generateRevisionExercise()">Générer l\'exercice de révision</button></div>' +
+    '</div>' +
+    '<div id="revisionExerciseZone"></div>';
+}
+
+async function generateRevisionExercise(){
+  const checked = Array.prototype.slice.call(document.querySelectorAll('.revisionCourseCheck:checked'));
+  const zone = document.getElementById('revisionExerciseZone');
+  if(checked.length < 1){ zone.innerHTML = '<div class="feedback-card">Coche au moins un cours.</div>'; return; }
+  const selectedCourses = checked.map(function(cb){ return state.courses[parseInt(cb.value, 10)]; });
+  zone.innerHTML = '<div class="loading"><div class="spinner"></div>Génération de l\'exercice de révision...</div>';
+
+  const coursesSummary = selectedCourses.map(function(c){ return '- ' + c.name + (c.pointsCles ? (' : ' + c.pointsCles) : (c.resume ? (' : ' + c.resume.slice(0,150)) : '')); }).join('\n');
+  const system = "Tu es un professeur qui prépare un grand exercice de révision en " + state.language + " pour un étudiant débutant, combinant plusieurs cours déjà vus. Réponds UNIQUEMENT avec ce JSON exact, sans markdown : {\"questions\":[{\"enonce\":\"...\"},{\"enonce\":\"...\"}]}";
+  const user = 'Cours à réviser ensemble (' + selectedCourses.length + ') :\n' + coursesSummary + '\n\n' +
+    'Domaine préféré de l\'étudiant : "' + state.domain + '". Idée de projet : "' + state.projectIdea + '".\n' +
+    'Génère entre 3 et 5 questions/exercices progressifs en ' + state.language + ' qui appliquent ENSEMBLE les notions de TOUS ces cours sélectionnés (pas un exercice séparé par cours, mais des questions qui combinent plusieurs notions à la fois quand c\'est possible). Reste dans le thème du projet de l\'étudiant si possible.';
+  try{
+    const raw = await callClaude(system, user);
+    const clean = raw.replace(/```json\n?/g,'').replace(/```/g,'').trim();
+    const parsed = JSON.parse(clean);
+    state.revisionQuestions = parsed.questions || [];
+    zone.innerHTML = '<div class="statement-box"><strong>Exercice de révision (' + selectedCourses.map(function(c){return c.name;}).join(', ') + ')</strong><br><br>' +
+      state.revisionQuestions.map(function(q, i){ return (i+1) + '. ' + escapeHTML(q.enonce); }).join('<br><br>') + '</div>' +
+      '<label style="font-size:12px; color:var(--text-muted); font-weight:600; margin-top:10px;">Ta réponse (pour toutes les questions)</label>' +
+      '<textarea id="revisionAnswerInput" style="min-height:150px;"></textarea>' +
+      '<div class="cta-center" style="margin-top:8px;"><button class="btn-pink" onclick="correctRevisionExercise()">Correction</button></div>' +
+      '<div id="revisionCorrectionZone"></div>';
+  }catch(err){
+    zone.innerHTML = friendlyErrorHTML(err, "Impossible de générer l'exercice de révision.");
+    console.error(err);
+  }
+}
+
+async function correctRevisionExercise(){
+  const answer = document.getElementById('revisionAnswerInput').value.trim();
+  const zone = document.getElementById('revisionCorrectionZone');
+  if(!answer){ zone.innerHTML = '<div class="feedback-card">Écris ta réponse avant de valider.</div>'; return; }
+  zone.innerHTML = '<div class="loading"><div class="spinner"></div>Correction en cours...</div>';
+  const system = "Tu corriges un exercice de révision combinant plusieurs cours, pour un étudiant débutant en " + state.language + ". Réponds UNIQUEMENT avec ce JSON exact : {\"mistakes\":[\"erreur 1\",\"erreur 2\"],\"correction\":\"le code corrigé complet\"} (mistakes vide si tout est bon).";
+  const user = 'Questions posées :\n' + state.revisionQuestions.map(function(q,i){ return (i+1)+'. '+q.enonce; }).join('\n') + '\n\nRéponse de l\'étudiant :\n' + answer;
+  try{
+    const raw = await callClaude(system, user);
+    const clean = raw.replace(/```json\n?/g,'').replace(/```/g,'').trim();
+    const result = JSON.parse(clean);
+    zone.innerHTML = renderFeedbackHTML(result.mistakes || [], result.correction || '');
+  }catch(err){
+    zone.innerHTML = friendlyErrorHTML(err, "Erreur pendant la correction.");
+    console.error(err);
+  }
+}
+
 function updateDayLabels(){
   document.getElementById('dayLabel').textContent = 'Jour Num: ' + state.dayNum;
   document.getElementById('dayLabelEx').textContent = 'Jour Num: ' + state.dayNum;
   document.getElementById('dayLabelCC').textContent = 'Jour Num: ' + state.dayNum;
   document.getElementById('streakCount').textContent = state.streak;
+  const storyLabel = document.getElementById('storyDomainLabel');
+  if(storyLabel) storyLabel.textContent = state.domain || 'ton domaine';
 }
 
 /* Reconstruit la liste des "pièces validées" à partir de ce qui est réellement
