@@ -463,6 +463,7 @@
         <h2>Ton programme assemblé (expérimental)</h2>
         <p class="subtitle">Cette étape essaie de fusionner tout l'historique du projet (tous les exercices + tous les Code Craft + le design) en un seul programme. Pour un petit projet ça marche bien ; pour un projet qui a beaucoup grossi, l'IA peut avoir du mal à tout inclure sans coupure. Le chemin recommandé et plus fiable est de terminer chaque cours directement depuis la page Code Craft (bouton "Terminer ce cours avec ce code").</p>
         <div id="executeInventoryZone"></div>
+        <div id="executeHelpZone"></div>
         <label style="font-size:12px; color:var(--text-muted); font-weight:600;">Nouveau design à ajouter (optionnel) — laisse vide pour réutiliser simplement ce qui est déjà enregistré</label>
         <textarea id="executeExtraDesign" placeholder="Décris ici un nouveau design/animation à intégrer en plus de ceux déjà sauvegardés..." style="min-height:70px;"></textarea>
         <div class="cta-center" style="margin:10px 0;"><button class="btn-purple" onclick="runAssembly()">Lancer l'assemblage</button></div>
@@ -473,7 +474,6 @@
           <button class="btn-outline" style="width:auto;" onclick="copyAssembledCode()">Copier le code</button>
           <button class="btn-purple" onclick="finalizeCourseAndContinue()">Continuer</button>
         </div>
-        <div id="executeHelpZone"></div>
       </div>
 
       <!-- BREAK SCREEN -->
@@ -2542,17 +2542,45 @@ function updateDayLabels(){
   document.getElementById('streakCount').textContent = state.streak;
 }
 
+/* Reconstruit la liste des "pièces validées" à partir de ce qui est réellement
+   sauvegardé dans le cours — nécessaire après un rechargement de page ou une nouvelle
+   connexion, puisque cette liste ne vit sinon qu'en mémoire le temps de la session. */
+function rebuildProjectCodeLogFromCourse(course){
+  state.projectCodeLog = [];
+  (course.exercises || []).forEach(function(ex){
+    if(ex.correction){ state.projectCodeLog.push({ source: 'Exercice: ' + ex.level, code: ex.correction }); }
+  });
+  (course.pieces || []).forEach(function(p){
+    state.projectCodeLog.push({ source: 'Code Craft: ' + course.name, code: p.code });
+  });
+}
+
 /* Ajoute (ou récupère) l'entrée de ce cours dans l'arbre dès que son nom + contenu sont
    fournis, sans attendre la fin des exercices/Code Craft — et évite de créer une 2e
    feuille si le même nom de cours est retapé/re-terminé plus tard. */
 async function ensureCourseInTree(name, resume){
   let course = state.courses.find(function(c){ return c.name === name; });
-  if(course) return course;
+  if(course){
+    rebuildProjectCodeLogFromCourse(course);
+    state.activeCourseIndex = state.courses.indexOf(course);
+    return course;
+  }
   course = { name: name, resume: resume || '', pointsCles: '', inProgress: true, exercises: [], codeCraft: {}, design: {}, finalCode: '', notes: '', paperHTML: '', pieces: [] };
   state.courses.push(course);
   const id = await saveCourseToFirestore(course);
   if(id) course.id = id;
+  state.projectCodeLog = [];
+  state.activeCourseIndex = state.courses.length - 1;
   return course;
+}
+
+/* Retrouve le cours actif par référence directe (index) plutôt que par son nom — évite
+   qu'une pièce validée se perde silencieusement si le nom ne correspond plus exactement. */
+function getActiveCourse(){
+  if(typeof state.activeCourseIndex === 'number' && state.courses[state.activeCourseIndex]){
+    return state.courses[state.activeCourseIndex];
+  }
+  return state.courses.find(function(c){ return c.name === state.courseName; }) || null;
 }
 
 async function generateExercises(){
@@ -2731,13 +2759,16 @@ async function correctCodeCraft(){
     cc.validated = true;
     if(!isReview){
       state.projectCodeLog.push({source: 'Code Craft: ' + state.courseName, code: result.correction});
-      const treeCourse = state.courses.find(function(c){ return c.name === state.courseName; });
+      const treeCourse = getActiveCourse();
       if(treeCourse){
         if(!treeCourse.pieces) treeCourse.pieces = [];
         treeCourse.pieces.push({ statement: cc.statement, code: result.correction });
         if(treeCourse.id){
           firestoreCall('update', 'users/' + currentUserId + '/courses/' + treeCourse.id, { pieces: treeCourse.pieces }).catch(function(err){ console.error('Erreur sauvegarde pièce', err); });
         }
+      } else {
+        console.error('Aucun cours actif retrouvé — cette pièce ne sera pas incluse dans l\'assemblage.');
+        showErrorToast('Cette pièce n\'a pas pu être rattachée à un cours (elle ne sera pas incluse dans l\'assemblage).', new Error('Aucun cours actif'));
       }
       document.getElementById('btnMorePieces').disabled = false;
       renderCodeCraftDesignSection();
@@ -2806,8 +2837,8 @@ async function finishThisCourse(){
     );
   }catch(err){ console.error(err); }
 
-  let course = state.courses.find(function(c){ return c.name === state.courseName; });
-  if(!course){ course = { name: state.courseName }; state.courses.push(course); }
+  let course = getActiveCourse();
+  if(!course){ course = { name: state.courseName }; state.courses.push(course); state.activeCourseIndex = state.courses.length - 1; }
   Object.assign(course, {
     resume: state.courseResume,
     pointsCles: pointsCles,
@@ -2924,6 +2955,19 @@ function openExecuteScreen(){
   document.getElementById('executeExtraDesign').value = '';
   document.getElementById('executeHelpZone').innerHTML = helpBoxHTML('execute');
   state.translation = { targetLang:'', autoCode:'', studentCode:'', mistakes:[], correction:'', finalCode:'' };
+
+  /* Reconstruit la liste à partir de TOUS les cours du projet (pas seulement celui en
+     cours), pour que l'assemblage reflète bien tout l'historique réel, même après un
+     rechargement de page ou une nouvelle connexion. */
+  state.projectCodeLog = [];
+  state.courses.forEach(function(c){
+    (c.exercises || []).forEach(function(ex){
+      if(ex.correction){ state.projectCodeLog.push({ source: c.name + ' — Exercice: ' + ex.level, code: ex.correction }); }
+    });
+    (c.pieces || []).forEach(function(p){
+      state.projectCodeLog.push({ source: c.name + ' — Code Craft', code: p.code });
+    });
+  });
 
   const hasDesign = !!state.design.sampleCode;
   const inventoryLines = state.projectCodeLog.map(function(p){ return '✓ ' + p.source; });
