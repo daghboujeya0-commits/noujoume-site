@@ -425,6 +425,10 @@
         <span class="day-label" id="dayLabelEx">Jour Num: 1</span>
         <div id="exercisesList"></div>
         <div class="cta-center" id="codeCraftUnlockZone"></div>
+        <div class="cta-center" style="margin-top:14px;">
+          <button class="btn-blue" onclick="explainCourseWithStory('exercisesStoryZone')">💬 M'expliquer ce cours avec une histoire liée à mon domaine</button>
+        </div>
+        <div id="exercisesStoryZone"></div>
       </div>
 
       <!-- SINGLE EXERCISE -->
@@ -561,6 +565,10 @@
         <p class="subtitle">Chaque feuille est un cours ajouté, avec sa propre couleur. Clique sur une feuille pour revoir son détail.</p>
         <div id="treeContainer" style="display:flex; justify-content:center;"></div>
         <div id="treeAssembleZone"></div>
+        <div class="cta-center" style="margin-top:14px;">
+          <button class="btn-blue" onclick="explainCourseWithStory('treeStoryZone')">💬 M'expliquer mon cours actuel avec une histoire</button>
+        </div>
+        <div id="treeStoryZone"></div>
         <div class="cta-center">
           <button class="btn-outline" style="width:auto;" onclick="goCourses()">Voir en liste simple</button>
           <button class="btn-pink" onclick="showScreen('screen-day')">+ Ajouter un nouveau cours</button>
@@ -617,6 +625,7 @@ let fbAuth = null;
 let fbDb = null;
 let firebaseReady = false;
 let firebaseInitError = null;
+let authAutoContinueHandled = false;
 
 function initFirebase(){
   try{
@@ -644,6 +653,15 @@ function initFirebase(){
     if(banner) banner.remove();
     checkEmailLinkSignIn();
     checkGoogleRedirectResult();
+    /* Connexion automatique : si une session existe déjà sur cet appareil (connexion
+       précédente encore valide), on saute l'écran de connexion et on continue
+       directement — évite de retaper son e-mail à chaque visite. */
+    fbAuth.onAuthStateChanged(function(user){
+      if(user && !authAutoContinueHandled){
+        authAutoContinueHandled = true;
+        onAuthSuccess(user.uid, user.email || '');
+      }
+    });
   }catch(err){
     firebaseReady = false;
     firebaseInitError = err;
@@ -715,6 +733,7 @@ async function checkEmailLinkSignIn(){
     const cred = await fbAuth.signInWithEmailLink(email, window.location.href);
     window.localStorage.removeItem('noujoumeEmailForSignIn');
     window.history.replaceState({}, document.title, window.location.pathname);
+    authAutoContinueHandled = true;
     await onAuthSuccess(cred.user.uid, email);
   }catch(err){
     if(zone) zone.innerHTML = errorDetailHTML(err, "Le lien de connexion n'est plus valide, redemande-en un nouveau.");
@@ -763,6 +782,7 @@ async function checkGoogleRedirectResult(){
   try{
     const result = await fbAuth.getRedirectResult();
     if(result && result.user){
+      authAutoContinueHandled = true;
       await onAuthSuccess(result.user.uid, result.user.email || '');
     }
   }catch(err){
@@ -774,6 +794,7 @@ async function checkGoogleRedirectResult(){
 
 function handleLogout(){
   if(fbAuth) fbAuth.signOut();
+  authAutoContinueHandled = false;
   document.getElementById('sidebar').style.display = 'none';
   document.getElementById('streakBadge').style.display = 'none';
   document.getElementById('bearWidget').classList.add('hidden');
@@ -835,6 +856,19 @@ async function getDocWithRetry(path, attempts){
   throw lastErr;
 }
 
+/* Reprend directement là où l'étudiant en était : sur les exercices s'il a un cours pas
+   encore terminé, sinon sur la page pour ajouter un nouveau cours. */
+async function goToWhereverStudentLeftOff(){
+  const inProgressCourse = state.courses.find(function(c){ return c.inProgress; });
+  if(inProgressCourse){
+    document.getElementById('courseNameInput').value = inProgressCourse.name;
+    document.getElementById('courseResumeInput').value = inProgressCourse.resume || '';
+    try{ await generateExercises(); }catch(e){ console.error(e); showScreen('screen-day'); }
+  } else {
+    showScreen('screen-day');
+  }
+}
+
 async function onAuthSuccess(uid, email){
   currentUserId = uid;
   const snap = await getDocWithRetry('users/' + uid);
@@ -863,7 +897,7 @@ async function onAuthSuccess(uid, email){
       document.getElementById('streakBadge').style.display = 'flex';
       showBearWidget();
       updateDayLabels();
-      showScreen('screen-day');
+      await goToWhereverStudentLeftOff();
       setTimeout(function(){ bearSay(getBearLines('welcomeBack'), 'happy', 3600); }, 500);
     } else {
       showScreen('screen-onboarding');
@@ -2456,6 +2490,9 @@ function openCourseDetail(idx){
   const c = state.courses[idx];
   let html = courseCardHTML(c, idx);
 
+  html += '<div class="cta-center" style="margin-top:12px;"><button class="btn-blue" onclick="explainCourseWithStory(\'courseDetailStoryZone\', ' + idx + ')">💬 M\'expliquer ce cours avec une histoire liée à mon domaine</button></div>';
+  html += '<div id="courseDetailStoryZone"></div>';
+
   html += '<h3 style="margin-top:20px;">Document du cours</h3>';
   html += '<div class="row-gap" style="margin-bottom:6px; align-items:center;">' +
     '<span class="subtitle" style="margin:0;">Marqueurs :</span>' +
@@ -2598,11 +2635,14 @@ function renderTree(){
 /* ---------- DAY / EXERCISES ---------- */
 /* Explique le cours (nom + résumé tapés) avec une histoire simple où les notions du
    cours sont remplacées par des éléments du domaine préféré de l'étudiant. */
-async function explainCourseWithStory(){
-  const courseName = document.getElementById('courseNameInput').value.trim();
-  const courseResume = document.getElementById('courseResumeInput').value.trim();
-  const zone = document.getElementById('courseStoryZone');
-  if(!courseName){ zone.innerHTML = '<div class="feedback-card">Indique d\'abord le nom du cours ci-dessus.</div>'; return; }
+async function explainCourseWithStory(zoneId, courseIdx){
+  const specificCourse = (typeof courseIdx === 'number') ? state.courses[courseIdx] : null;
+  const nameInput = document.getElementById('courseNameInput');
+  const resumeInput = document.getElementById('courseResumeInput');
+  const courseName = specificCourse ? specificCourse.name : ((nameInput ? nameInput.value.trim() : '') || state.courseName);
+  const courseResume = specificCourse ? specificCourse.resume : ((resumeInput ? resumeInput.value.trim() : '') || state.courseResume);
+  const zone = document.getElementById(zoneId || 'courseStoryZone');
+  if(!courseName){ zone.innerHTML = '<div class="feedback-card">Aucun cours sélectionné pour l\'instant.</div>'; return; }
   zone.innerHTML = '<div class="loading"><div class="spinner"></div>Écriture de l\'histoire...</div>';
   const system = "Tu es un professeur qui explique des notions techniques à un étudiant débutant à travers de petites histoires simples et imagées. Réponds en français, de façon concrète, chaleureuse et courte (250 mots maximum). Pas de markdown compliqué, juste du texte clair avec quelques paragraphes courts.";
   const user = 'Cours à expliquer : "' + courseName + '"' + (courseResume ? (' — résumé : ' + courseResume) : '') + '.\n' +
@@ -2610,8 +2650,9 @@ async function explainCourseWithStory(){
     'Explique ce cours à travers une petite histoire ou analogie simple où les éléments techniques du cours sont remplacés par des éléments concrets de ce domaine (par exemple, si le domaine est la cuisine, une boucle devient "répéter une recette plusieurs fois", une variable devient "un ingrédient qu\'on peut changer"...). L\'histoire doit rester courte, claire, et vraiment aider à comprendre la notion technique — pas juste raconter une histoire pour le plaisir.';
   try{
     const raw = await callClaude(system, user);
+    const retryArgs = "'" + (zoneId || 'courseStoryZone') + "'" + (typeof courseIdx === 'number' ? (', ' + courseIdx) : '');
     zone.innerHTML = '<div class="feedback-card ok" style="white-space:pre-wrap;">' + escapeHTML(raw) + '</div>' +
-      '<div class="cta-center" style="margin-top:8px;"><button class="btn-outline btn-small" style="width:auto;" onclick="explainCourseWithStory()">🔄 Une autre histoire</button></div>';
+      '<div class="cta-center" style="margin-top:8px;"><button class="btn-outline btn-small" style="width:auto;" onclick="explainCourseWithStory(' + retryArgs + ')">🔄 Une autre histoire</button></div>';
   }catch(err){
     zone.innerHTML = friendlyErrorHTML(err, "Impossible de générer l'histoire pour l'instant.");
     console.error(err);
@@ -2765,12 +2806,26 @@ async function generateExercises(){
     }
     const parsed = safeParseJSON(raw);
     state.exercises = parsed.exercises.map(function(e){ return Object.assign({}, e, {done:false, code:'', mistakes:[], correction:''}); });
+    await saveExercisesToActiveCourse();
     loadingZone.innerHTML = '';
     renderExercisesList();
     showScreen('screen-exercises');
   }catch(err){
     loadingZone.innerHTML = '<div class="feedback-card">Une erreur est survenue pendant la génération. Réessaie.</div>';
     console.error(err);
+  }
+}
+
+/* Sauvegarde les exercices en cours dans le cours actif, au fur et à mesure — pas
+   seulement une fois le cours entièrement terminé — pour pouvoir reprendre exactement
+   là où on en était après un rechargement de page ou une nouvelle connexion. */
+async function saveExercisesToActiveCourse(){
+  const course = getActiveCourse();
+  if(!course) return;
+  course.exercises = JSON.parse(JSON.stringify(state.exercises));
+  if(course.id){
+    try{ await firestoreCall('update', 'users/' + currentUserId + '/courses/' + course.id, { exercises: course.exercises }); }
+    catch(err){ console.error('Erreur de sauvegarde des exercices', err); }
   }
 }
 
@@ -2844,7 +2899,18 @@ async function correctExercise(){
     ex.mistakes = result.mistakes;
     ex.correction = result.correction;
     ex.done = true;
-    if(!reviewMode){ state.projectCodeLog.push({source: 'Exercice: ' + ex.level, code: ex.correction}); bearSay(getBearLines('exerciseDone'), 'happy', 3400); triggerSnowfall(); }
+    if(!reviewMode){
+      state.projectCodeLog.push({source: 'Exercice: ' + ex.level, code: ex.correction});
+      bearSay(getBearLines('exerciseDone'), 'happy', 3400);
+      triggerSnowfall();
+      const activeCourse = getActiveCourse();
+      if(activeCourse){
+        activeCourse.exercises = JSON.parse(JSON.stringify(state.exercises));
+        if(activeCourse.id){
+          firestoreCall('update', 'users/' + currentUserId + '/courses/' + activeCourse.id, { exercises: activeCourse.exercises }).catch(function(err){ console.error('Erreur sauvegarde exercice', err); });
+        }
+      }
+    }
     zone.innerHTML = renderFeedbackHTML(ex.mistakes, ex.correction);
   }catch(err){ zone.innerHTML = friendlyErrorHTML(err, 'Erreur pendant la correction. Réessaie.'); console.error(err); }
 }
