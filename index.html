@@ -767,6 +767,9 @@ async function handleGoogleAuth(){
   zone.innerHTML = '<div class="loading"><div class="spinner"></div>Redirection vers Google...</div>';
   try{
     const provider = new firebase.auth.GoogleAuthProvider();
+    /* Marque qu'une redirection Google est en cours, pour pouvoir afficher un diagnostic
+       clair sur la page au retour, sans avoir besoin des outils de développeur. */
+    window.sessionStorage.setItem('googleRedirectPending', '1');
     /* On utilise une redirection plutôt qu'une popup : les popups sont souvent bloquées
        par le navigateur (bloqueurs de pub, Safari...), la redirection ne pose pas ce
        problème. La page se recharge après connexion, voir checkGoogleRedirectResult(). */
@@ -777,16 +780,24 @@ async function handleGoogleAuth(){
   }
 }
 
-/* Au chargement de la page : si on revient d'une redirection Google, termine la connexion. */
+/* Au chargement de la page : si on revient d'une redirection Google, termine la connexion.
+   Affiche toujours un message visible sur la page (succès ou diagnostic), sans dépendre
+   des outils de développeur. */
 async function checkGoogleRedirectResult(){
+  const wasPending = window.sessionStorage.getItem('googleRedirectPending') === '1';
+  const zone = document.getElementById('authStatusZone');
   try{
     const result = await fbAuth.getRedirectResult();
     if(result && result.user){
+      window.sessionStorage.removeItem('googleRedirectPending');
       authAutoContinueHandled = true;
       await onAuthSuccess(result.user.uid, result.user.email || '');
+    } else if(wasPending){
+      window.sessionStorage.removeItem('googleRedirectPending');
+      if(zone) zone.innerHTML = '<div class="feedback-card">⚠️ Retour de Google, mais aucune session reçue.<br><span style="font-size:11px; opacity:0.8;">Détail technique : getRedirectResult() n\'a renvoyé aucun utilisateur (result = ' + escapeHTML(JSON.stringify(result)) + ').</span></div>';
     }
   }catch(err){
-    const zone = document.getElementById('authStatusZone');
+    window.sessionStorage.removeItem('googleRedirectPending');
     if(zone) zone.innerHTML = errorDetailHTML(err, 'Connexion Google impossible.');
     console.error('Erreur de connexion Google (redirect) :', err);
   }
@@ -2650,11 +2661,36 @@ async function explainCourseWithStory(zoneId, courseIdx){
     'Explique ce cours à travers une petite histoire ou analogie simple où les éléments techniques du cours sont remplacés par des éléments concrets de ce domaine (par exemple, si le domaine est la cuisine, une boucle devient "répéter une recette plusieurs fois", une variable devient "un ingrédient qu\'on peut changer"...). L\'histoire doit rester courte, claire, et vraiment aider à comprendre la notion technique — pas juste raconter une histoire pour le plaisir.';
   try{
     const raw = await callClaude(system, user);
+    lastStoryText = raw;
     const retryArgs = "'" + (zoneId || 'courseStoryZone') + "'" + (typeof courseIdx === 'number' ? (', ' + courseIdx) : '');
-    zone.innerHTML = '<div class="feedback-card ok" style="white-space:pre-wrap;">' + escapeHTML(raw) + '</div>' +
+    zone.innerHTML = '<div class="row-gap" style="margin-bottom:6px;">' +
+      '<span class="subtitle" style="margin:0;">🌐 Traduire en :</span>' +
+      '<button class="btn-outline btn-small" style="width:auto;" onclick="translateStory(\'' + (zoneId || 'courseStoryZone') + '\', \'arabe tunisien\')">العربية (تونس)</button>' +
+      '<button class="btn-outline btn-small" style="width:auto;" onclick="translateStory(\'' + (zoneId || 'courseStoryZone') + '\', \'anglais\')">English</button>' +
+      '</div>' +
+      '<div class="feedback-card ok" id="' + (zoneId || 'courseStoryZone') + '_text" style="white-space:pre-wrap;">' + escapeHTML(raw) + '</div>' +
       '<div class="cta-center" style="margin-top:8px;"><button class="btn-outline btn-small" style="width:auto;" onclick="explainCourseWithStory(' + retryArgs + ')">🔄 Une autre histoire</button></div>';
   }catch(err){
     zone.innerHTML = friendlyErrorHTML(err, "Impossible de générer l'histoire pour l'instant.");
+    console.error(err);
+  }
+}
+
+let lastStoryText = '';
+async function translateStory(zoneId, targetLang){
+  const textZone = document.getElementById(zoneId + '_text');
+  if(!textZone || !lastStoryText) return;
+  const original = textZone.getAttribute('data-original') || lastStoryText;
+  textZone.setAttribute('data-original', original);
+  textZone.innerHTML = '<div class="loading"><div class="spinner"></div>Traduction...</div>';
+  try{
+    const translated = await callClaude(
+      "Tu traduis un texte pédagogique en " + targetLang + ", de façon naturelle et fluide, sans rien ajouter ni expliquer, juste la traduction.",
+      original
+    );
+    textZone.innerHTML = escapeHTML(translated);
+  }catch(err){
+    textZone.innerHTML = escapeHTML(original);
     console.error(err);
   }
 }
@@ -2794,7 +2830,8 @@ async function generateExercises(){
     'Nouveau cours ajouté : "' + state.courseName + '".\n' +
     resumePart + '\n\n' +
     'Génère exactement 3 exercices de programmation en ' + state.language + ' liés à ce cours, de niveaux progressifs (facile, intermédiaire, avancé), si possible en lien avec le thème "' + state.domain + '" et l\'idée de projet de l\'étudiant.\n' +
-    'Au moins un des 3 exercices (l\'intermédiaire ou l\'avancé) doit explicitement demander au programme de lire une vraie saisie de l\'utilisateur au clavier (scanf/fgets en C, input() en Python, Scanner en Java, cin en C++, prompt en JS) — précise-le clairement dans l\'énoncé (ex: "demande son nom à l\'utilisateur", "lis un nombre saisi au clavier").\n\n' +
+    'IMPORTANT (niveau réel) : l\'énoncé ne doit JAMAIS nommer la structure ou le mot-clé à utiliser (ne dis jamais "utilise if/else", "utilise une boucle for", "utilise un tableau"...). Décris uniquement CE QUE le programme doit faire (le résultat attendu, l\'entrée, la sortie, le comportement), comme un vrai énoncé de programmation professionnel — c\'est à l\'étudiant de trouver seul quelle notion utiliser, c\'est ça la vraie difficulté à préserver. Formule plutôt comme "Écris un programme qui demande à l\'utilisateur..., puis affiche/calcule...".\n' +
+    'Au moins un des 3 exercices (l\'intermédiaire ou l\'avancé) doit impliquer une vraie saisie de l\'utilisateur au clavier — décris ce que le programme doit demander (ex: "demande son nom à l\'utilisateur et affiche un message personnalisé"), sans dire quelle fonction utiliser pour le faire.\n\n' +
     'Réponds uniquement avec ce JSON exact :\n{"exercises":[{"level":"facile","statement":"..."},{"level":"intermédiaire","statement":"..."},{"level":"avancé","statement":"..."}]}';
 
   try{
