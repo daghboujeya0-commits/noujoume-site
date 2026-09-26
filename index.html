@@ -1741,7 +1741,18 @@ function setBearMood(mood, message, durationMs){
   } else {
     bubble.style.display = 'none';
   }
-  if(durationMs){
+  if(message){
+    /* Les messages de l'ourson restaient affichés trop peu de temps — on impose une
+       durée minimale généreuse pour laisser le temps de les lire, quel que soit
+       l'endroit du code qui les déclenche. */
+    const effectiveDuration = Math.max(durationMs || 0, 7000);
+    setTimeout(function(){
+      bear.mood = 'idle';
+      box.className = 'bear-svg-box bear-idle';
+      updateBearSVG('bearSvgBox', 'idle');
+      bubble.style.display = 'none';
+    }, effectiveDuration);
+  } else if(durationMs){
     setTimeout(function(){
       bear.mood = 'idle';
       box.className = 'bear-svg-box bear-idle';
@@ -2647,6 +2658,7 @@ async function explainCourseWithStory(zoneId, courseIdx){
       '<span class="subtitle" style="margin:0;">🌐 Traduire en :</span>' +
       '<button class="btn-outline btn-small" style="width:auto;" onclick="translateStory(\'' + (zoneId || 'courseStoryZone') + '\', \'arabe tunisien\')">العربية (تونس)</button>' +
       '<button class="btn-outline btn-small" style="width:auto;" onclick="translateStory(\'' + (zoneId || 'courseStoryZone') + '\', \'anglais\')">English</button>' +
+      '<button class="btn-outline btn-small" style="width:auto;" onclick="backToFrenchStory(\'' + (zoneId || 'courseStoryZone') + '\')">Français</button>' +
       '</div>' +
       '<div class="feedback-card ok" id="' + (zoneId || 'courseStoryZone') + '_text" style="white-space:pre-wrap;">' + escapeHTML(raw) + '</div>' +
       '<div class="cta-center" style="margin-top:8px;"><button class="btn-outline btn-small" style="width:auto;" onclick="explainCourseWithStory(' + retryArgs + ')">🔄 Une autre histoire</button></div>';
@@ -2673,6 +2685,13 @@ async function translateStory(zoneId, targetLang){
     textZone.innerHTML = escapeHTML(original);
     console.error(err);
   }
+}
+
+function backToFrenchStory(zoneId){
+  const textZone = document.getElementById(zoneId + '_text');
+  if(!textZone) return;
+  const original = textZone.getAttribute('data-original') || lastStoryText;
+  textZone.innerHTML = escapeHTML(original);
 }
 
 /* ---------- GRAND EXERCICE DE RÉVISION (plusieurs cours) ---------- */
@@ -2797,7 +2816,16 @@ async function generateExercises(){
   if(!courseName || (!courseResume && !state.uploadedImage)){ alert('Indique le nom du cours et un résumé (texte, PDF ou image) pour continuer.'); return; }
   state.courseName = courseName;
   state.courseResume = courseResume;
-  await ensureCourseInTree(courseName, courseResume);
+  const existing = await ensureCourseInTree(courseName, courseResume);
+
+  if(existing && existing.inProgress && existing.exercises && existing.exercises.length){
+    /* Ce cours a déjà des exercices sauvegardés en cours de route : on les recharge
+       avec leur progression au lieu d'en régénérer de nouveaux. */
+    state.exercises = JSON.parse(JSON.stringify(existing.exercises));
+    renderExercisesList();
+    showScreen('screen-exercises');
+    return;
+  }
 
   const loadingZone = document.getElementById('dayLoading');
   loadingZone.innerHTML = '<div class="loading"><div class="spinner"></div>Génération de tes exercices...</div>';
@@ -2812,7 +2840,8 @@ async function generateExercises(){
     'Génère exactement 3 exercices de programmation en ' + state.language + ' liés à ce cours, de niveaux progressifs (facile, intermédiaire, avancé), si possible en lien avec le thème "' + state.domain + '" et l\'idée de projet de l\'étudiant.\n' +
     'IMPORTANT (niveau réel) : l\'énoncé ne doit JAMAIS nommer la structure ou le mot-clé à utiliser (ne dis jamais "utilise if/else", "utilise une boucle for", "utilise un tableau"...). Décris uniquement CE QUE le programme doit faire (le résultat attendu, l\'entrée, la sortie, le comportement), comme un vrai énoncé de programmation professionnel — c\'est à l\'étudiant de trouver seul quelle notion utiliser, c\'est ça la vraie difficulté à préserver. Formule plutôt comme "Écris un programme qui demande à l\'utilisateur..., puis affiche/calcule...".\n' +
     'IMPORTANT (jamais de valeur codée en dur) : si l\'exercice implique de tester, comparer ou évaluer une valeur (un score, un âge, une quantité, un état...), l\'énoncé doit demander que cette valeur soit SAISIE par l\'utilisateur au clavier (avec éventuellement une contrainte à respecter, ex: "un nombre entre 0 et 100"), jamais fixée d\'avance dans le code (ne dis jamais "initialise une variable à X" quand une saisie serait plus logique). Le but est un programme qui fonctionne pour N\'IMPORTE QUELLE valeur donnée par l\'utilisateur, pas pour un seul cas particulier.\n' +
-    'Au moins un des 3 exercices (l\'intermédiaire ou l\'avancé) doit impliquer une vraie saisie de l\'utilisateur au clavier — décris ce que le programme doit demander (ex: "demande son nom à l\'utilisateur et affiche un message personnalisé"), sans dire quelle fonction utiliser pour le faire.\n\n' +
+    'Au moins un des 3 exercices (l\'intermédiaire ou l\'avancé) doit impliquer une vraie saisie de l\'utilisateur au clavier — décris ce que le programme doit demander (ex: "demande son nom à l\'utilisateur et affiche un message personnalisé"), sans dire quelle fonction utiliser pour le faire.\n' +
+    (state.language === 'JavaScript' ? 'IMPORTANT (JavaScript va avec HTML/CSS) : en JavaScript, la saisie de l\'utilisateur et l\'affichage se font normalement via une page web, pas via une console. Chaque énoncé doit donc impliquer une petite page HTML avec des éléments (formulaire, bouton, champ de texte...), un peu de style CSS, et du JavaScript qui manipule le DOM en réaction à une action de l\'utilisateur (clic, saisie...) — jamais du JavaScript isolé sans HTML/CSS autour.\n\n' : '\n') +
     'Réponds uniquement avec ce JSON exact :\n{"exercises":[{"level":"facile","statement":"..."},{"level":"intermédiaire","statement":"..."},{"level":"avancé","statement":"..."}]}';
 
   try{
@@ -2951,6 +2980,7 @@ async function openCodeCraft(){
   const user = 'Domaine préféré : "' + state.domain + '". Idée de projet : "' + state.projectIdea + '". Langue : ' + state.language + '. Cours du jour : "' + state.courseName + '" (résumé: """' + state.courseResume + '""").\n' +
     'Fonctions déjà validées par l\'étudiant jusqu\'ici : ' + JSON.stringify(state.projectCodeLog.map(function(c){return c.source;})) + '.\n' +
     'Propose une fonction ou procédure en ' + state.language + ', utilisant les notions de ce cours, à ajouter au projet de l\'étudiant. Privilégie autant que possible une fonction qui lit une vraie entrée clavier de l\'utilisateur (scanf, fgets, input(), Scanner, prompt... selon le langage) — par exemple demander son nom, un choix, un score, une réponse — plutôt qu\'une fonction purement calculatoire sans aucune interaction. N\'invente jamais un choix codé en dur à la place du joueur, et ne fixe jamais d\'avance une valeur qui devrait être saisie par l\'utilisateur (pas de "initialise une variable à X" quand une vraie saisie serait plus logique).\n' +
+    (state.language === 'JavaScript' ? 'IMPORTANT (JavaScript va avec HTML/CSS) : propose une pièce qui implique un petit bout de HTML (un élément, un formulaire, un bouton...), un peu de CSS, et du JavaScript qui les relie (écoute un événement, modifie le DOM) — jamais du JavaScript tout seul sans HTML/CSS.\n' : '') +
     'Réponds uniquement avec ce JSON exact :\n{"statement":"On va ajouter à notre code une fonction/procédure qui permet de faire... à partir de ' + (state.courseName || 'ce cours') + '. Info supp : ..."}';
 
   try{
@@ -3228,7 +3258,8 @@ async function runAssembly(){
     'Assemble tout ceci en un seul programme ' + state.language + ' complet et cohérent, avec un point d\'entrée unique (main ou équivalent) qui appelle les fonctions de façon logique. Résous les conflits de noms si besoin.\n' +
     'IMPORTANT (ne rien raccourcir ni omettre) : reprends CHAQUE fonction fournie ci-dessus dans son intégralité, telle quelle, sans la résumer ni la condenser. Le programme final doit être AU MOINS aussi long que la somme des morceaux fournis (moins les doublons évidents comme deux #include identiques). N\'élimine jamais une fonction simplement parce qu\'elle semble moins liée au thème du jeu : trouve une façon logique de l\'intégrer (par exemple comme une nouvelle scène, un nouvel obstacle, une statistique affichée, une étape du menu). Chaque fonction fournie doit être réellement appelée au moins une fois quelque part dans le programme.\n' +
     'IMPORTANT (animation) : si une fonction d\'animation/design a été fournie (boucle, déplacement, affichage répété dans le temps), le point d\'entrée doit réellement l\'appeler et la faire tourner (plusieurs frames avec une pause entre chaque), pas seulement l\'inclure sans l\'utiliser.\n' +
-    'IMPORTANT (interactivité) : si le projet implique des choix, des actions ou une progression décidée par le joueur, le programme final doit être réellement interactif — il doit lire une vraie entrée clavier à chaque étape de décision (scanf/fgets en C, input() en Python, Scanner en Java, cin en C++, prompt en JS) et réagir différemment selon ce que le joueur tape. N\'invente et ne simule JAMAIS des choix à la place du joueur (pas de valeurs codées en dur du type "le joueur fait tel choix..." imprimées automatiquement) : le programme doit s\'arrêter et attendre que l\'utilisateur tape quelque chose au clavier.';
+    'IMPORTANT (interactivité) : si le projet implique des choix, des actions ou une progression décidée par le joueur, le programme final doit être réellement interactif — il doit lire une vraie entrée clavier à chaque étape de décision (scanf/fgets en C, input() en Python, Scanner en Java, cin en C++, prompt en JS) et réagir différemment selon ce que le joueur tape. N\'invente et ne simule JAMAIS des choix à la place du joueur (pas de valeurs codées en dur du type "le joueur fait tel choix..." imprimées automatiquement) : le programme doit s\'arrêter et attendre que l\'utilisateur tape quelque chose au clavier.' +
+    (state.language === 'JavaScript' ? '\nIMPORTANT (JavaScript va avec HTML/CSS) : réponds avec UNE SEULE page HTML complète et autonome (<!DOCTYPE html> jusqu\'à </html>), avec le CSS dans une balise <style> et le JavaScript dans une balise <script>, qui relie tous les morceaux HTML/CSS/JS fournis en une interface cohérente et interactive. Pas de fichiers séparés, pas d\'explication, juste cette page HTML complète.' : '');
 
   try{
     const raw = await callClaudeLong(system, user, 5);
