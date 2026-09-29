@@ -395,7 +395,7 @@
         <h2>Nom du cours</h2>
         <input type="text" id="courseNameInput" placeholder="ex: les pointeurs en C">
         <label style="font-size:12px; color:var(--text-muted); font-weight:600;">Ajouter une ressource (résumé du cours)</label>
-        <textarea id="courseResumeInput" placeholder="Colle ici le résumé de ton nouveau cours..." style="background:var(--purple-accent); color:#fff; min-height:90px;"></textarea>
+        <textarea id="courseResumeInput" placeholder="Colle ici le résumé de ton nouveau cours..." style="background:var(--purple-accent); color:#fff; min-height:220px; max-height:500px; resize:vertical; white-space:pre-wrap;"></textarea>
 
         <label style="font-size:12px; color:var(--text-muted); font-weight:600;">Ou ajoute directement un fichier</label>
         <div class="file-drop">
@@ -439,7 +439,7 @@
         <div class="statement-box" id="exerciseStatement">Chargement...</div>
         <label style="font-size:12px; color:var(--text-muted); font-weight:600;">Essai</label>
         <textarea id="exerciseCode" placeholder="Écris ton code ici..." style="min-height:180px; font-family:'Courier New',monospace;"></textarea>
-        <div class="row-gap"><button class="btn-pink" onclick="correctExercise()">Correction</button></div>
+        <div class="row-gap"><button class="btn-pink" onclick="correctExercise()">Correction</button><button class="btn-outline" style="width:auto;" onclick="saveExerciseDraftAndReturn()">💾 Enregistrer</button></div>
         <div id="exerciseFeedbackZone"></div>
         <div id="exerciseHelpZone"></div>
       </div>
@@ -652,6 +652,7 @@ function initFirebase(){
     const banner = document.getElementById('firebaseLoadError');
     if(banner) banner.remove();
     checkEmailLinkSignIn();
+    restorePrayerRemindersIfSaved();
     /* Connexion automatique : si une session existe déjà sur cet appareil (connexion
        précédente encore valide), on saute l'écran de connexion et on continue
        directement — évite de retaper son e-mail à chaque visite. */
@@ -1302,9 +1303,12 @@ async function refreshPrayerTimesFromCoords(){
   const zone = document.getElementById('prayerStatusZone');
   zone.innerHTML = '<div class="loading"><div class="spinner"></div>Calcul des horaires de prière...</div>';
   try{
+    window.localStorage.setItem('noujoumePrayerLocation', JSON.stringify({ lat: prayerCoords.lat, lon: prayerCoords.lon, label: prayerLocationLabel }));
+  }catch(e){}
+  try{
     const today = new Date();
     const dateStr = String(today.getDate()).padStart(2,'0') + '-' + String(today.getMonth()+1).padStart(2,'0') + '-' + today.getFullYear();
-    const url = 'https://api.aladhan.com/v1/timings/' + dateStr + '?latitude=' + prayerCoords.lat + '&longitude=' + prayerCoords.lon + '&method=3';
+    const url = 'https://api.aladhan.com/v1/timings/' + dateStr + '?latitude=' + prayerCoords.lat + '&longitude=' + prayerCoords.lon + '&method=18';
     const resp = await fetch(url);
     const data = await resp.json();
     const t = data.data.timings;
@@ -1354,19 +1358,51 @@ async function searchPrayerCity(){
   }
 }
 
+/* Relance automatiquement les rappels si une localisation a déjà été enregistrée
+   sur cet appareil (plus besoin de recliquer à chaque visite). */
+function restorePrayerRemindersIfSaved(){
+  try{
+    const raw = window.localStorage.getItem('noujoumePrayerLocation');
+    if(!raw) return;
+    const saved = JSON.parse(raw);
+    if(typeof saved.lat !== 'number' || typeof saved.lon !== 'number') return;
+    prayerCoords = { lat: saved.lat, lon: saved.lon };
+    prayerLocationLabel = saved.label || '';
+    refreshPrayerTimesFromCoords();
+  }catch(e){ console.error(e); }
+}
+
 function checkPrayerTime(){
   if(!prayerTimes) return;
   if(new Date().toDateString() !== prayerTimesDate){ prayerTimes = null; clearInterval(prayerCheckInterval); return; } // nouveau jour : il faudra réactiver pour les horaires du jour
   const now = new Date();
-  const current = String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0');
+  const nowMinutes = now.getHours() * 60 + now.getMinutes();
   Object.keys(prayerTimes).forEach(function(name){
-    if(prayerTimes[name] === current && !remindedToday[name]){
+    const parts = prayerTimes[name].split(':');
+    const prayerMinutes = parseInt(parts[0], 10) * 60 + parseInt(parts[1], 10);
+    /* Fenêtre de tolérance de 2 minutes après l'heure : évite de rater le rappel si
+       l'onglet est en arrière-plan et que le navigateur ralentit ses minuteries. */
+    const diff = nowMinutes - prayerMinutes;
+    if(diff >= 0 && diff <= 2 && !remindedToday[name]){
       remindedToday[name] = true;
-      if(document.getElementById('bearWidget') && !document.getElementById('bearWidget').classList.contains('hidden')){
+      const bearWidgetEl = document.getElementById('bearWidget');
+      if(bearWidgetEl && !bearWidgetEl.classList.contains('hidden')){
         bearSay(getBearLines('prayerReminder'), 'idle', 7000);
       }
+      showPrayerBanner(name);
     }
   });
+}
+
+/* Bandeau visible en plus de l'ourson (au cas où il est masqué ou pas remarqué) */
+function showPrayerBanner(prayerName){
+  const banner = document.createElement('div');
+  banner.style.cssText = 'position:fixed; top:16px; left:50%; transform:translateX(-50%); z-index:950; ' +
+    'background:var(--purple-accent, #8a7398); color:#fff; padding:12px 20px; border-radius:10px; ' +
+    'box-shadow:0 6px 18px rgba(0,0,0,0.25); font-size:14px; font-weight:600; max-width:90vw; text-align:center;';
+  banner.textContent = '🕌 C\'est l\'heure de la prière de ' + prayerName + ' (' + prayerTimes[prayerName] + ')';
+  document.body.appendChild(banner);
+  setTimeout(function(){ banner.remove(); }, 12000);
 }
 
 function goQuran(){
@@ -2361,11 +2397,35 @@ async function extractPdfText(file){
   const buffer = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({data: buffer}).promise;
   let fullText = '';
-  const maxPages = Math.min(pdf.numPages, 15);
+  const maxPages = Math.min(pdf.numPages, 100);
   for(let i=1; i<=maxPages; i++){
     const page = await pdf.getPage(i);
     const content = await page.getTextContent();
-    fullText += content.items.map(it => it.str).join(' ') + '\n';
+    let pageText = '';
+    let lastY = null;
+    let lastEndX = null;
+    content.items.forEach(function(it){
+      if(typeof it.str !== 'string') return;
+      const x = it.transform ? it.transform[4] : null;
+      const y = it.transform ? it.transform[5] : null;
+      const newLine = (lastY !== null && y !== null && Math.abs(y - lastY) > 2);
+      if(newLine){
+        /* Changement de ligne : retour à la ligne (ligne vide en plus si grand saut vertical, ex: nouveau paragraphe) */
+        pageText += (Math.abs(y - lastY) > 18) ? '\n\n' : '\n';
+      } else if(pageText && lastEndX !== null && x !== null){
+        /* Même ligne : espace seulement s'il y a un vrai écart horizontal entre les deux morceaux de texte */
+        const gap = x - lastEndX;
+        if(gap > 1.5 && !pageText.endsWith(' ') && !it.str.startsWith(' ')){ pageText += ' '; }
+      }
+      pageText += it.str;
+      if(it.hasEOL && !pageText.endsWith('\n')){ pageText += '\n'; lastY = null; lastEndX = null; return; }
+      lastY = y;
+      lastEndX = (x !== null) ? (x + (it.width || 0)) : null;
+    });
+    fullText += pageText.trim() + '\n\n';
+  }
+  if(pdf.numPages > maxPages){
+    fullText += '\n[PDF tronqué : seules les ' + maxPages + ' premières pages sur ' + pdf.numPages + ' ont été extraites.]\n';
   }
   return fullText.trim();
 }
@@ -2896,6 +2956,15 @@ function renderExercisesList(){
   } else {
     zone.innerHTML = '<div class="locked-msg">Oups :( tu ne peux pas passer à cette étape avant de finir les 3 exercices.</div>';
   }
+}
+
+/* Sauvegarde juste l'essai en cours (sans demander de correction) et retourne à la liste */
+async function saveExerciseDraftAndReturn(){
+  if(typeof currentExerciseIdx === 'number' && state.exercises[currentExerciseIdx]){
+    state.exercises[currentExerciseIdx].code = document.getElementById('exerciseCode').value;
+    await saveExercisesToActiveCourse();
+  }
+  backToExercisesList();
 }
 
 function backToExercisesList(){ renderExercisesList(); showScreen('screen-exercises'); }
