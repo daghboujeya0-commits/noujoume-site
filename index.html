@@ -2441,7 +2441,20 @@ async function handleResourceFiles(event){
       if(file.type.startsWith('image/')){
         const base64 = await readFileAsBase64(file);
         state.uploadedImage = { base64: base64, mediaType: file.type, name: file.name };
-        li.textContent = '🖼️ ' + file.name + " — sera analysée par l'IA";
+        li.textContent = '🖼️ ' + file.name + " — analyse par l'IA en cours...";
+        try{
+          const extracted = await callClaudeWithImage(
+            "Tu analyses l'image d'un support de cours (photo de tableau, de cahier, de slide, de page de livre, schéma...) pour un étudiant. Retranscris et reformule fidèlement tout le contenu pédagogique visible (texte, définitions, formules, code, schémas décrits en mots) sous forme d'un cours clair et structuré, en français. Conserve les retours à la ligne et la structure (titres, listes). N'invente rien qui n'est pas dans l'image. Réponds uniquement avec le contenu du cours, sans phrase d'introduction.",
+            "Voici l'image du cours à transcrire et structurer.",
+            base64, file.type
+          );
+          const resumeBoxImg = document.getElementById('courseResumeInput');
+          resumeBoxImg.value += (resumeBoxImg.value ? '\n\n' : '') + extracted.trim();
+          li.textContent = '🖼️ ' + file.name + ' — contenu extrait par l\'IA et ajouté au cours';
+        }catch(imgErr){
+          console.error(imgErr);
+          li.textContent = '🖼️ ' + file.name + " — l'IA n'a pas pu lire cette image (elle sera quand même transmise telle quelle pour générer les exercices)";
+        }
       } else if(file.type === 'application/pdf'){
         const text = await extractPdfText(file);
         const resumeBox = document.getElementById('courseResumeInput');
@@ -2674,7 +2687,7 @@ function renderTree(){
       const leafX = trunkX + side*branchLen;
       const color = LEAF_COLORS[i % LEAF_COLORS.length];
       svg += '<path d="M' + trunkX + ' ' + y + ' Q' + (trunkX + side*branchLen*0.5) + ' ' + (y-14) + ' ' + leafX + ' ' + (y-18) + '" stroke="#8a6b45" stroke-width="3" fill="none" stroke-linecap="round"/>';
-      svg += '<g style="cursor:pointer;" onclick="openCourseDetail(' + i + ')">' +
+      svg += '<g style="cursor:pointer;" onclick="openCourseDetail(' + i + ')" oncontextmenu="showCourseContextMenu(event, ' + i + ')" ontouchstart="startCourseLongPress(event, ' + i + ')" ontouchend="cancelCourseLongPress()" ontouchmove="cancelCourseLongPress()">' +
         '<ellipse cx="' + leafX + '" cy="' + (y-24) + '" rx="20" ry="15" fill="' + color + '" stroke="#2c1830" stroke-width="1.6" transform="rotate(' + (side*20) + ' ' + leafX + ' ' + (y-24) + ')"/>' +
         '<text x="' + leafX + '" y="' + (y-21) + '" text-anchor="middle" font-size="10" fill="#fff" font-weight="700">' + (i+1) + '</text>' +
         '</g>';
@@ -2683,7 +2696,7 @@ function renderTree(){
   svg += '</svg>';
 
   zone.innerHTML = svg + '<div class="subtitle" style="text-align:center; margin-top:8px;">' + courses.map(function(c,i){
-    return '<span style="display:inline-block; margin:2px 6px; cursor:pointer;" onclick="openCourseDetail(' + i + ')"><span style="display:inline-block; width:9px; height:9px; border-radius:50%; background:' + LEAF_COLORS[i % LEAF_COLORS.length] + '; margin-right:4px;"></span>' + escapeHTML(c.name) + '</span>';
+    return '<span style="display:inline-block; margin:2px 6px; cursor:pointer;" onclick="openCourseDetail(' + i + ')" oncontextmenu="showCourseContextMenu(event, ' + i + ')" ontouchstart="startCourseLongPress(event, ' + i + ')" ontouchend="cancelCourseLongPress()" ontouchmove="cancelCourseLongPress()"><span style="display:inline-block; width:9px; height:9px; border-radius:50%; background:' + LEAF_COLORS[i % LEAF_COLORS.length] + '; margin-right:4px;"></span>' + escapeHTML(c.name) + '</span>';
   }).join('') + '</div>';
 
   const assembleZone = document.getElementById('treeAssembleZone');
@@ -2692,6 +2705,75 @@ function renderTree(){
       ? '<div class="cta-center" style="margin-top:16px;"><button class="btn-purple" onclick="openExecuteScreen()">🧩 Assembler et exécuter tout le projet</button></div>'
       : '';
   }
+}
+
+/* ---------- SUPPRESSION D'UN COURS (clic droit / appui long sur l'arbre) ---------- */
+let courseLongPressTimer = null;
+
+function closeCourseContextMenu(){
+  const old = document.getElementById('courseContextMenu');
+  if(old) old.remove();
+}
+
+function showCourseContextMenu(event, idx){
+  event.preventDefault();
+  event.stopPropagation();
+  closeCourseContextMenu();
+  const course = state.courses[idx];
+  if(!course) return;
+  const x = (event.clientX !== undefined && event.clientX !== 0) ? event.clientX : (event.touches && event.touches[0] ? event.touches[0].clientX : window.innerWidth/2);
+  const y = (event.clientY !== undefined && event.clientY !== 0) ? event.clientY : (event.touches && event.touches[0] ? event.touches[0].clientY : window.innerHeight/2);
+  const menu = document.createElement('div');
+  menu.id = 'courseContextMenu';
+  menu.style.cssText = 'position:fixed; left:' + Math.min(x, window.innerWidth - 200) + 'px; top:' + Math.min(y, window.innerHeight - 80) + 'px; z-index:1000; ' +
+    'background:#fff; border:1px solid #e0c9d0; border-radius:8px; box-shadow:0 6px 18px rgba(0,0,0,0.2); padding:6px; min-width:170px; font-size:13px;';
+  menu.innerHTML = '<div style="padding:6px 10px; color:var(--text-muted); font-size:11px; border-bottom:1px solid #f0e4e8; margin-bottom:4px;">' + escapeHTML(course.name) + '</div>' +
+    '<div onclick="deleteCourse(' + idx + ')" style="padding:8px 10px; cursor:pointer; border-radius:6px; color:#c0392b; font-weight:600;" onmouseover="this.style.background=\'#fdecea\'" onmouseout="this.style.background=\'transparent\'">🗑️ Supprimer ce cours</div>';
+  document.body.appendChild(menu);
+  setTimeout(function(){
+    document.addEventListener('click', closeCourseContextMenu, { once: true });
+    document.addEventListener('keydown', function escListener(e){ if(e.key === 'Escape'){ closeCourseContextMenu(); document.removeEventListener('keydown', escListener); } });
+  }, 0);
+}
+
+/* Appui long sur téléphone/tablette (pas de clic droit sur écran tactile) */
+function startCourseLongPress(event, idx){
+  cancelCourseLongPress();
+  courseLongPressTimer = setTimeout(function(){
+    showCourseContextMenu(event, idx);
+  }, 600);
+}
+function cancelCourseLongPress(){
+  if(courseLongPressTimer){ clearTimeout(courseLongPressTimer); courseLongPressTimer = null; }
+}
+
+async function deleteCourse(idx){
+  closeCourseContextMenu();
+  const course = state.courses[idx];
+  if(!course) return;
+  if(!confirm('Supprimer définitivement le cours « ' + course.name + ' » ? Ses exercices, pièces de code et notes seront effacés. Cette action ne peut pas être annulée.')) return;
+  try{
+    if(course.id){
+      await firestoreCall('delete', 'users/' + currentUserId + '/courses/' + course.id);
+    }
+  }catch(err){
+    console.error('Erreur de suppression du cours', err);
+    showErrorToast('Suppression du cours impossible.', err);
+    return;
+  }
+  const wasActive = (state.activeCourseIndex === idx) || (state.courseName === course.name);
+  state.courses.splice(idx, 1);
+  if(typeof state.activeCourseIndex === 'number'){
+    if(state.activeCourseIndex === idx){ state.activeCourseIndex = null; }
+    else if(state.activeCourseIndex > idx){ state.activeCourseIndex -= 1; }
+  }
+  if(wasActive){
+    state.courseName = '';
+    state.courseResume = '';
+    state.exercises = [];
+    state.projectCodeLog = [];
+  }
+  renderTree();
 }
 
 /* ---------- DAY / EXERCISES ---------- */
