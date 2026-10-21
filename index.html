@@ -282,6 +282,7 @@
   <div class="body-area">
     <div class="sidebar" id="sidebar" style="display:none;">
       <div class="sidebar-chip">Domaine préféré<strong id="sidebarDomain">—</strong></div>
+      <button class="sidebar-btn" onclick="goProjects()">🗂️ Mes projets</button>
       <button class="sidebar-btn" onclick="goSummary()">📝 Résumé de ton parcours</button>
       <button class="sidebar-btn" onclick="goTree()">🌳 Arbre de compétences</button>
       <button class="sidebar-btn" onclick="goBearAdmin()">🐻 Modifier les phrases de l'ourson</button>
@@ -536,6 +537,14 @@
       </div>
 
       <!-- STATS -->
+      <div class="screen" id="screen-projects">
+        <h2>🗂️ Mes projets</h2>
+        <p class="subtitle">Choisis le projet sur lequel tu veux avancer, ou commence-en un nouveau.</p>
+        <div id="projectsList"></div>
+        <div class="cta-center" style="margin-top:14px;"><button class="btn-pink" onclick="startNewProject()">➕ Nouveau projet</button></div>
+        <div class="cta-center" style="margin-top:10px;"><button class="btn-outline btn-small" style="width:auto;" onclick="handleLogout()">🚪 Se déconnecter</button></div>
+      </div>
+
       <div class="screen" id="screen-summary">
         <h2>📝 Résumé de ton parcours</h2>
         <p class="subtitle">Tes choix de départ et un résumé de chaque pièce ajoutée à ton projet.</p>
@@ -652,7 +661,8 @@ function initFirebase(){
     const banner = document.getElementById('firebaseLoadError');
     if(banner) banner.remove();
     checkEmailLinkSignIn();
-    restorePrayerRemindersIfSaved();
+    /* Différé : les variables des prières sont déclarées plus bas dans le script */
+    setTimeout(restorePrayerRemindersIfSaved, 0);
     /* Connexion automatique : si une session existe déjà sur cet appareil (connexion
        précédente encore valide), on saute l'écran de connexion et on continue
        directement — évite de retaper son e-mail à chaque visite. */
@@ -787,6 +797,9 @@ async function handleGoogleAuth(){
 function handleLogout(){
   if(fbAuth) fbAuth.signOut();
   authAutoContinueHandled = false;
+  resetWorkingState();
+  state.projects = []; state.allCourses = []; state.currentProjectId = null;
+  state.domain = ''; state.domainDetail = ''; state.projectIdea = '';
   document.getElementById('sidebar').style.display = 'none';
   document.getElementById('streakBadge').style.display = 'none';
   document.getElementById('bearWidget').classList.add('hidden');
@@ -861,6 +874,92 @@ async function goToWhereverStudentLeftOff(){
   }
 }
 
+/* ---------- PROJETS (plusieurs projets par élève) ---------- */
+const LEGACY_PROJECT_ID = 'p_legacy';
+
+/* Un cours sans projectId (créé avant l'arrivée des projets) appartient au projet d'origine */
+function courseProjectId(c){ return c.projectId || LEGACY_PROJECT_ID; }
+function newProjectId(){ return 'p_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+function getCurrentProject(){ return state.projects.find(function(p){ return p.id === state.currentProjectId; }) || null; }
+
+function fallbackProjectTitle(idea){
+  const words = String(idea || 'Nouveau projet').replace(/\s+/g, ' ').trim().split(' ');
+  let t = words.slice(0, 5).join(' ');
+  if(words.length > 5) t += '…';
+  return t;
+}
+
+/* Titre court inspiré de l'idée du projet (généré par l'IA, avec un titre de secours) */
+async function generateProjectTitle(idea, domain){
+  const raw = await callClaude(
+    "Tu inventes un titre court et évocateur (2 à 5 mots maximum, sans guillemets, sans point final) pour un projet de jeu ou d'application, inspiré de son idée. Réponds uniquement avec le titre.",
+    'Domaine : ' + domain + '. Idée du projet : ' + idea
+  );
+  const t = String(raw || '').replace(/["«»\n\r]/g, '').trim();
+  return (t && t.length <= 60) ? t : null;
+}
+
+async function saveProjects(){ await saveProfileToFirestore({ projects: state.projects }); }
+
+function resetWorkingState(){
+  state.courses = []; state.exercises = []; state.projectCodeLog = [];
+  state.courseName = ''; state.courseResume = ''; state.activeCourseIndex = null; state.assembledCode = '';
+  state.uploadedImage = null; state.uploadedFilesNote = [];
+  state.codeCraft = { statement:'', code:'', validated:false, functionCode:'' };
+  state.design = { demarche:'', sampleCode:'', studentCode:'', mistakes:[], correction:'', validated:false };
+}
+
+function refreshProjectsListIfVisible(){
+  const scr = document.getElementById('screen-projects');
+  if(scr && scr.classList.contains('active')) renderProjectsList();
+}
+
+function renderProjectsList(){
+  const zone = document.getElementById('projectsList');
+  if(!state.projects.length){
+    zone.innerHTML = '<p class="subtitle">Tu n\'as pas encore de projet — clique sur « Nouveau projet » pour commencer.</p>';
+    return;
+  }
+  zone.innerHTML = state.projects.map(function(p){
+    const nb = state.allCourses.filter(function(c){ return courseProjectId(c) === p.id; }).length;
+    return '<button class="btn-blue" style="width:100%; text-align:left; margin-bottom:10px; padding:14px 16px;" onclick="openProject(\'' + p.id + '\')">' +
+      '<div style="font-size:15px; font-weight:700;">' + escapeHTML(p.title || fallbackProjectTitle(p.projectIdea)) + '</div>' +
+      '<div style="font-size:12px; font-weight:400; opacity:0.85; margin-top:3px;">' + escapeHTML(p.domain || '') + ' · ' + escapeHTML(p.language || '') + ' · ' + nb + ' cours</div>' +
+      '</button>';
+  }).join('');
+}
+
+function goProjects(){
+  renderProjectsList();
+  showScreen('screen-projects');
+}
+
+async function openProject(pid){
+  const p = state.projects.find(function(x){ return x.id === pid; });
+  if(!p) return;
+  resetWorkingState();
+  state.currentProjectId = pid;
+  state.domain = p.domain || ''; state.domainDetail = p.domainDetail || '';
+  state.language = p.language || 'C'; state.projectIdea = p.projectIdea || '';
+  state.courses = state.allCourses.filter(function(c){ return courseProjectId(c) === pid; });
+  document.getElementById('courseNameInput').value = '';
+  document.getElementById('courseResumeInput').value = '';
+  document.getElementById('sidebar').style.display = 'flex';
+  document.getElementById('sidebarDomain').textContent = state.domain;
+  document.getElementById('streakBadge').style.display = 'flex';
+  showBearWidget();
+  updateDayLabels();
+  await goToWhereverStudentLeftOff();
+}
+
+function startNewProject(){
+  ['qDetail','qIdea','qSuggestion'].forEach(function(id){ const el = document.getElementById(id); if(el) el.value = ''; });
+  const dom = document.getElementById('qDomain'); if(dom) dom.selectedIndex = 0;
+  const lg = document.getElementById('qLang'); if(lg) lg.selectedIndex = 0;
+  const ld = document.getElementById('onboardingLoading'); if(ld) ld.innerHTML = '';
+  showScreen('screen-onboarding');
+}
+
 async function onAuthSuccess(uid, email){
   currentUserId = uid;
   const snap = await getDocWithRetry('users/' + uid);
@@ -871,25 +970,35 @@ async function onAuthSuccess(uid, email){
     showScreen('screen-onboarding');
   } else {
     const data = snap.data;
-    Object.assign(state, {
-      domain:data.domain||'', domainDetail:data.domainDetail||'', language:data.language||'C',
-      projectIdea:data.projectIdea||'', studentName:data.studentName||'',
-      dayNum:data.dayNum||1, streak:data.streak||0
-    });
+    Object.assign(state, { studentName:data.studentName||'', dayNum:data.dayNum||1, streak:data.streak||0 });
     bear.name = data.bearName || '';
     earnedBadges = data.earnedBadges || [];
     sadakaMilestonesReached = data.sadakaMilestonesReached || 0;
     focusStats = data.focusStats || { totalSeconds:0, byDomain:{}, byCourse:{} };
     const courseList = await firestoreCall('list', 'users/' + uid + '/courses');
-    state.courses = (courseList.documents || []).map(function(d){ return d; });
+    resetWorkingState();
+    state.domain = ''; state.domainDetail = ''; state.projectIdea = ''; state.language = 'C';
+    state.allCourses = (courseList.documents || []).slice();
+    state.projects = Array.isArray(data.projects) ? data.projects.slice() : [];
+    state.currentProjectId = null;
 
-    if(state.domain && bear.name){
-      document.getElementById('sidebar').style.display = 'flex';
-      document.getElementById('sidebarDomain').textContent = state.domain;
+    /* Élève d'avant les projets : son domaine/idée d'origine devient son premier projet
+       (ses anciens cours, sans projectId, lui sont rattachés automatiquement). */
+    if(!state.projects.length && data.domain && data.projectIdea && data.bearName){
+      const legacy = { id: LEGACY_PROJECT_ID, title: fallbackProjectTitle(data.projectIdea), domain: data.domain,
+        domainDetail: data.domainDetail || '', language: data.language || 'C', projectIdea: data.projectIdea, createdAt: Date.now() };
+      state.projects.push(legacy);
+      saveProjects();
+      generateProjectTitle(legacy.projectIdea, legacy.domain).then(function(t){
+        if(t){ legacy.title = t; saveProjects(); refreshProjectsListIfVisible(); }
+      }).catch(function(e){ console.error(e); });
+    }
+
+    if(state.projects.length && bear.name){
       document.getElementById('streakBadge').style.display = 'flex';
       showBearWidget();
       updateDayLabels();
-      await goToWhereverStudentLeftOff();
+      goProjects();
       setTimeout(function(){ bearSay(getBearLines('welcomeBack'), 'happy', 3600); }, 500);
     } else {
       showScreen('screen-onboarding');
@@ -935,6 +1044,10 @@ let state = {
   exercises: [],
   projectCodeLog: [],
   courses: [],
+  allCourses: [],
+  projects: [],
+  currentProjectId: null,
+  activeCourseIndex: null,
   codeCraft: { statement:'', code:'', validated:false, functionCode:'' },
   design: { demarche:'', sampleCode:'', studentCode:'', mistakes:[], correction:'', validated:false },
   assembledCode: '',
@@ -2001,6 +2114,13 @@ function showScreen(id, fromBack, fromPopstate){
   document.getElementById(id).classList.add('active');
   window.scrollTo(0,0);
   updateGlobalBackButton();
+  /* La barre latérale n'a de sens que dans un projet : masquée sur la page « Mes projets »
+     et pendant la création d'un nouveau projet, affichée dans les autres pages. */
+  const sbEl = document.getElementById('sidebar');
+  if(sbEl){
+    if(id === 'screen-projects' || id === 'screen-onboarding'){ sbEl.style.display = 'none'; }
+    else if(state.currentProjectId && bear.name){ sbEl.style.display = 'flex'; }
+  }
   /* Ajoute une entrée dans l'historique du navigateur : ça permet aux flèches
      précédent/suivant de Chrome de naviguer DANS le site plutôt que d'en sortir. */
   if(!fromPopstate){
@@ -2373,14 +2493,32 @@ function finishOnboarding(){
   if(!domain){ alert('Choisis ton domaine préféré pour continuer.'); return; }
   const finalIdea = idea || suggestion;
   if(!finalIdea){ alert('Écris ton idée de projet, ou clique sur "Proposer une idée".'); return; }
+  /* Chaque passage ici crée un NOUVEAU projet (le premier, ou un projet de plus) */
+  const pid = newProjectId();
+  const project = { id: pid, title: fallbackProjectTitle(finalIdea), domain: domain, domainDetail: detail,
+    language: lang, projectIdea: finalIdea, createdAt: Date.now() };
+  resetWorkingState();
+  state.projects.push(project);
+  state.currentProjectId = pid;
   state.domain = domain; state.domainDetail = detail; state.language = lang; state.projectIdea = finalIdea;
-  saveProfileToFirestore({ domain: domain, domainDetail: detail, language: lang, projectIdea: finalIdea });
+  saveProfileToFirestore({ projects: state.projects, domain: domain, domainDetail: detail, language: lang, projectIdea: finalIdea });
+  generateProjectTitle(finalIdea, domain).then(function(t){
+    if(t){ project.title = t; saveProjects(); refreshProjectsListIfVisible(); }
+  }).catch(function(e){ console.error(e); });
   document.getElementById('sidebar').style.display = 'flex';
   document.getElementById('sidebarDomain').textContent = domain;
   document.getElementById('streakBadge').style.display = 'flex';
+  document.getElementById('courseNameInput').value = '';
+  document.getElementById('courseResumeInput').value = '';
   updateDayLabels();
-  updateBearSVG('bearIntroSvg', 'idle');
-  showScreen('screen-bear-intro');
+  if(bear.name){
+    /* L'ourson existe déjà (projet supplémentaire) : on saute sa présentation */
+    showBearWidget();
+    showScreen('screen-day');
+  } else {
+    updateBearSVG('bearIntroSvg', 'idle');
+    showScreen('screen-bear-intro');
+  }
 }
 
 /* ---------- RESOURCES UPLOAD ---------- */
@@ -2477,12 +2615,19 @@ async function handleResourceFiles(event){
 function goCourses(){ renderCoursesList(); showScreen('screen-courses'); }
 
 function courseCardHTML(c, ci){
+  /* Les 3 exercices et le Code Craft apparaissent dès la création du cours : « Répéter »
+     une fois faits, « À faire » tant qu'ils ne le sont pas. */
   const exRows = (c.exercises||[]).map(function(ex, ei){
-    return '<div class="review-item"><span>Exercice ' + (ei+1) + ' — ' + escapeHTML(ex.level) + '</span>' +
-      '<button class="btn-blue btn-small" onclick="openExerciseReview(' + ci + ',' + ei + ')">Répéter</button></div>';
+    const isDone = !!(ex.done || ex.correction);
+    const action = isDone
+      ? '<button class="btn-blue btn-small" onclick="openExerciseReview(' + ci + ',' + ei + ')">Répéter</button>'
+      : '<span class="exercise-status status-pending">À faire</span>';
+    return '<div class="review-item"><span>Exercice ' + (ei+1) + ' — ' + escapeHTML(ex.level) + '</span>' + action + '</div>';
   }).join('');
-  const ccRow = (c.codeCraft && c.codeCraft.functionCode) ?
-    '<div class="review-item"><span>Code Craft</span><button class="btn-purple btn-small" onclick="openCodeCraftReview(' + ci + ')">Répéter</button></div>' : '';
+  const ccDone = !!(c.codeCraft && c.codeCraft.functionCode);
+  const ccRow = '<div class="review-item"><span>Code Craft</span>' + (ccDone
+    ? '<button class="btn-purple btn-small" onclick="openCodeCraftReview(' + ci + ')">Répéter</button>'
+    : '<span class="exercise-status status-pending">À faire</span>') + '</div>';
   return '<div class="course-card"><div class="course-row">' +
     '<div class="course-name-btn">Cours num ' + (ci+1) + '<br><span style="font-weight:400; font-size:12px;">' + escapeHTML(c.name) + '</span></div>' +
     '<div class="course-points">' + escapeHTML(c.pointsCles) + '</div></div>' +
@@ -2500,7 +2645,9 @@ const LEAF_COLORS = ['#e63872','#8ecb8e','#cfe4f7','#f4a75c','#8a7398','#f6a0bc'
 
 function goSummary(){
   const zone = document.getElementById('summaryContent');
+  const curProject = getCurrentProject();
   let html = '<div class="feedback-card ok" style="text-align:left;">' +
+    (curProject ? '<strong>Projet :</strong> ' + escapeHTML(curProject.title) + '<br>' : '') +
     '<strong>Domaine préféré :</strong> ' + escapeHTML(state.domain || '—') + (state.domainDetail ? ' <span style="opacity:0.8;">(' + escapeHTML(state.domainDetail) + ')</span>' : '') + '<br>' +
     '<strong>Langage :</strong> ' + escapeHTML(state.language || '—') + '<br>' +
     '<strong>Idée de projet :</strong> ' + escapeHTML(state.projectIdea || '—') +
@@ -2519,37 +2666,35 @@ function goSummary(){
   } else {
     html += '<p class="subtitle">Termine ton premier cours (bouton "Terminer ce cours avec ce code") pour voir apparaître ton résumé ici.</p>';
   }
-  html += '<div class="cta-center" style="margin-top:22px;"><button class="btn-outline" onclick="resetJourney()">🔄 Recommencer à zéro (nouveau domaine, nouvelle idée...)</button></div>';
+  html += '<div class="cta-center" style="margin-top:22px;"><button class="btn-outline" onclick="resetJourney()">🔄 Recommencer ce projet à zéro (nouveau domaine, nouvelle idée...)</button></div>';
   zone.innerHTML = html;
   showScreen('screen-summary');
 }
 
-/* Efface le domaine, l'idée, le langage et tous les cours pour repartir de zéro */
+/* Supprime CE projet (domaine, idée, langage et tous ses cours) pour en recommencer un nouveau à zéro.
+   Les autres projets, l'ourson, les badges et la série de jours ne sont pas touchés. */
 async function resetJourney(){
-  if(!confirm("Es-tu sûr(e) ? Ça va effacer ton domaine, ton idée de projet, ton langage et tous tes cours pour repartir totalement de zéro. Cette action ne peut pas être annulée.")) return;
+  const project = getCurrentProject();
+  const title = project ? project.title : 'ce projet';
+  if(!confirm("Es-tu sûr(e) ? Ça va supprimer le projet « " + title + " » (domaine, idée, langage et tous ses cours) pour en recommencer un nouveau. Tes autres projets ne sont pas touchés. Cette action ne peut pas être annulée.")) return;
   const zone = document.getElementById('summaryContent');
   zone.innerHTML = '<div class="loading"><div class="spinner"></div>Réinitialisation en cours...</div>';
   try{
-    for(const c of state.courses){
-      if(c.id){
-        await firestoreCall('delete', 'users/' + currentUserId + '/courses/' + c.id).catch(function(err){ console.error('Erreur suppression cours', err); });
+    for(const course of state.courses.slice()){
+      if(course.id){
+        await firestoreCall('delete', 'users/' + currentUserId + '/courses/' + course.id).catch(function(err){ console.error('Erreur suppression cours', err); });
       }
+      const ai = state.allCourses.indexOf(course);
+      if(ai >= 0) state.allCourses.splice(ai, 1);
     }
-    const fresh = defaultProfileData();
-    await firestoreCall('set', 'users/' + currentUserId, fresh);
-    Object.assign(state, {
-      domain:'', domainDetail:'', language:'C', projectIdea:'', studentName:'',
-      dayNum:1, streak:0, courses:[], exercises:[], projectCodeLog:[],
-      uploadedImage:null, uploadedFilesNote:[], courseName:'', courseResume:''
-    });
-    bear.name = '';
-    earnedBadges = [];
-    sadakaMilestonesReached = 0;
-    focusStats = { totalSeconds:0, byDomain:{}, byCourse:{} };
+    const doomedId = state.currentProjectId;
+    state.projects = state.projects.filter(function(p){ return p.id !== doomedId; });
+    await saveProjects();
+    resetWorkingState();
+    state.currentProjectId = null;
+    state.domain = ''; state.domainDetail = ''; state.language = 'C'; state.projectIdea = '';
     document.getElementById('sidebar').style.display = 'none';
-    document.getElementById('streakBadge').style.display = 'none';
-    document.getElementById('bearWidget').classList.add('hidden');
-    showScreen('screen-onboarding');
+    startNewProject();
   }catch(err){
     zone.innerHTML = errorDetailHTML(err, "La réinitialisation a échoué.");
     console.error('Erreur de réinitialisation :', err);
@@ -2763,6 +2908,8 @@ async function deleteCourse(idx){
   }
   const wasActive = (state.activeCourseIndex === idx) || (state.courseName === course.name);
   state.courses.splice(idx, 1);
+  const allIdx = state.allCourses.indexOf(course);
+  if(allIdx >= 0) state.allCourses.splice(allIdx, 1);
   if(typeof state.activeCourseIndex === 'number'){
     if(state.activeCourseIndex === idx){ state.activeCourseIndex = null; }
     else if(state.activeCourseIndex > idx){ state.activeCourseIndex -= 1; }
@@ -2934,8 +3081,9 @@ async function ensureCourseInTree(name, resume){
     state.activeCourseIndex = state.courses.indexOf(course);
     return course;
   }
-  course = { name: name, resume: resume || '', pointsCles: '', inProgress: true, exercises: [], codeCraft: {}, design: {}, finalCode: '', notes: '', paperHTML: '', pieces: [] };
+  course = { name: name, projectId: state.currentProjectId || LEGACY_PROJECT_ID, resume: resume || '', pointsCles: '', inProgress: true, exercises: [], codeCraft: {}, design: {}, finalCode: '', notes: '', paperHTML: '', pieces: [] };
   state.courses.push(course);
+  state.allCourses.push(course);
   const id = await saveCourseToFirestore(course);
   if(id) course.id = id;
   state.projectCodeLog = [];
@@ -3254,7 +3402,7 @@ async function finishThisCourse(){
   }catch(err){ console.error(err); }
 
   let course = getActiveCourse();
-  if(!course){ course = { name: state.courseName }; state.courses.push(course); state.activeCourseIndex = state.courses.length - 1; }
+  if(!course){ course = { name: state.courseName, projectId: state.currentProjectId || LEGACY_PROJECT_ID }; state.courses.push(course); state.allCourses.push(course); state.activeCourseIndex = state.courses.length - 1; }
   Object.assign(course, {
     resume: state.courseResume,
     pointsCles: pointsCles,
