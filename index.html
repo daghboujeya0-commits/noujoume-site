@@ -2614,6 +2614,56 @@ async function handleResourceFiles(event){
 /* ---------- COURSES LIST ---------- */
 function goCourses(){ renderCoursesList(); showScreen('screen-courses'); }
 
+/* ---------- Depuis l'arbre : « À faire » ouvre directement l'exercice / le Code Craft ---------- */
+function activateCourseFromTree(ci){
+  const course = state.courses[ci];
+  if(!course) return null;
+  state.courseName = course.name;
+  state.courseResume = course.resume || '';
+  state.activeCourseIndex = ci;
+  state.exercises = JSON.parse(JSON.stringify(course.exercises || []));
+  state.codeCraft = { statement:'', code:'', validated:false, functionCode:'' };
+  /* Pièces déjà validées dans TOUS les cours de ce projet (sert de contexte au Code Craft) */
+  state.projectCodeLog = [];
+  state.courses.forEach(function(cc){
+    (cc.exercises || []).forEach(function(ex){
+      if(ex.correction){ state.projectCodeLog.push({ source: cc.name + ' — Exercice: ' + ex.level, code: ex.correction }); }
+    });
+    (cc.pieces || []).forEach(function(p){
+      state.projectCodeLog.push({ source: cc.name + ' — Code Craft', code: p.code });
+    });
+  });
+  return course;
+}
+
+/* Cours sans exercices enregistrés (génération jamais terminée) : on les (re)génère */
+async function regenerateExercisesFor(course){
+  document.getElementById('courseNameInput').value = course.name;
+  document.getElementById('courseResumeInput').value = course.resume || '';
+  await generateExercises();
+}
+
+function doExerciseFromTree(ci, ei){
+  const course = activateCourseFromTree(ci);
+  if(!course) return;
+  if(!state.exercises[ei]){ regenerateExercisesFor(course); return; }
+  openExercise(ei);
+}
+
+function doCodeCraftFromTree(ci){
+  const course = activateCourseFromTree(ci);
+  if(!course) return;
+  if(!state.exercises.length){ regenerateExercisesFor(course); return; }
+  const allDone = state.exercises.every(function(e){ return e.done || e.correction; });
+  if(!allDone){
+    /* Le Code Craft se débloque après les 3 exercices : on ouvre la liste pour les finir d'abord */
+    renderExercisesList();
+    showScreen('screen-exercises');
+    return;
+  }
+  openCodeCraft();
+}
+
 function courseCardHTML(c, ci){
   /* Les 3 exercices et le Code Craft apparaissent dès la création du cours : « Répéter »
      une fois faits, « À faire » tant qu'ils ne le sont pas. */
@@ -2621,13 +2671,13 @@ function courseCardHTML(c, ci){
     const isDone = !!(ex.done || ex.correction);
     const action = isDone
       ? '<button class="btn-blue btn-small" onclick="openExerciseReview(' + ci + ',' + ei + ')">Répéter</button>'
-      : '<span class="exercise-status status-pending">À faire</span>';
+      : '<button class="btn-pink btn-small" onclick="doExerciseFromTree(' + ci + ',' + ei + ')">À faire</button>';
     return '<div class="review-item"><span>Exercice ' + (ei+1) + ' — ' + escapeHTML(ex.level) + '</span>' + action + '</div>';
   }).join('');
   const ccDone = !!(c.codeCraft && c.codeCraft.functionCode);
   const ccRow = '<div class="review-item"><span>Code Craft</span>' + (ccDone
     ? '<button class="btn-purple btn-small" onclick="openCodeCraftReview(' + ci + ')">Répéter</button>'
-    : '<span class="exercise-status status-pending">À faire</span>') + '</div>';
+    : '<button class="btn-purple btn-small" onclick="doCodeCraftFromTree(' + ci + ')">À faire</button>') + '</div>';
   return '<div class="course-card"><div class="course-row">' +
     '<div class="course-name-btn">Cours num ' + (ci+1) + '<br><span style="font-weight:400; font-size:12px;">' + escapeHTML(c.name) + '</span></div>' +
     '<div class="course-points">' + escapeHTML(c.pointsCles) + '</div></div>' +
