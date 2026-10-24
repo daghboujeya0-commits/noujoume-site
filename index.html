@@ -476,11 +476,11 @@
       <!-- EXECUTE -->
       <div class="screen" id="screen-execute">
         <h2>Ton programme assemblé (expérimental)</h2>
-        <p class="subtitle">Cette étape essaie de fusionner tout l'historique du projet (tous les exercices + tous les Code Craft + le design) en un seul programme. Pour un petit projet ça marche bien ; pour un projet qui a beaucoup grossi, l'IA peut avoir du mal à tout inclure sans coupure. Le chemin recommandé et plus fiable est de terminer chaque cours directement depuis la page Code Craft (bouton "Terminer ce cours avec ce code").</p>
+        <p class="subtitle">Choisis les pièces <strong>Code Craft</strong> que tu veux assembler en un seul programme — rien n'est coché d'office. Avec peu de pièces ça marche très bien ; avec beaucoup, l'IA peut avoir du mal à tout inclure sans coupure, n'hésite pas à assembler par petits groupes.</p>
         <div id="executeInventoryZone"></div>
         <div id="executeHelpZone"></div>
-        <label style="font-size:12px; color:var(--text-muted); font-weight:600;">Nouveau design à ajouter (optionnel) — laisse vide pour réutiliser simplement ce qui est déjà enregistré</label>
-        <textarea id="executeExtraDesign" placeholder="Décris ici un nouveau design/animation à intégrer en plus de ceux déjà sauvegardés..." style="min-height:70px;"></textarea>
+        <label style="font-size:12px; color:var(--text-muted); font-weight:600;">Design à ajouter (optionnel) — décris-le ici si tu veux l'intégrer à l'assemblage</label>
+        <textarea id="executeExtraDesign" placeholder="Décris ici un design/animation à intégrer au programme..." style="min-height:70px;"></textarea>
         <div class="cta-center" style="margin:10px 0;"><button class="btn-purple" onclick="runAssembly()">Lancer l'assemblage</button></div>
         <div id="executeLoading"></div>
         <div id="executeCodeZone"></div>
@@ -2221,8 +2221,8 @@ function buildHelpContext(key){
     return 'Démarche proposée : ' + state.design.demarche + '\nExemple de code fourni : """' + state.design.sampleCode + '"""\nTentative de l\'étudiant : """' + (studentBox ? studentBox.value : '') + '"""';
   }
   if(key === 'execute'){
-    const inventory = state.projectCodeLog.map(function(p){ return '- ' + p.source; }).join('\n') || '(aucune pièce validée pour l\'instant)';
-    return 'Pièces réellement validées par l\'étudiant jusqu\'ici (celles que l\'assemblage est censé reprendre telles quelles) :\n' + inventory + '\n\n' +
+    const inventory = (state.lastAssemblySelection || []).map(function(s){ return '- ' + s; }).join('\n') || '(aucun assemblage lancé pour l\'instant)';
+    return 'Pièces Code Craft que l\'étudiant a choisi d\'assembler (celles que l\'assemblage est censé reprendre telles quelles) :\n' + inventory + '\n\n' +
       'Programme assemblé actuel (' + state.language + ') : """' + state.assembledCode + '"""';
   }
   return '';
@@ -3561,6 +3561,23 @@ async function verifyDesignAttempt(){
 }
 
 /* ---------- EXECUTE / ASSEMBLY ---------- */
+/* Pièces Code Craft sélectionnables : toutes celles de tous les cours du projet */
+function collectAssemblyItems(){
+  const items = [];
+  state.courses.forEach(function(course){
+    const pieces = course.pieces || [];
+    if(pieces.length){
+      pieces.forEach(function(p, n){
+        if(p && p.code){ items.push({ course: course.name, source: course.name + ' — Code Craft ' + (pieces.length > 1 ? (n+1) : ''), statement: p.statement || '', code: p.code }); }
+      });
+    } else if(course.codeCraft && (course.codeCraft.finalCode || course.codeCraft.functionCode)){
+      /* Cours terminé avant l'enregistrement des pièces une par une */
+      items.push({ course: course.name, source: course.name + ' — Code Craft', statement: course.codeCraft.statement || '', code: course.codeCraft.finalCode || course.codeCraft.functionCode });
+    }
+  });
+  return items;
+}
+
 function openExecuteScreen(){
   showScreen('screen-execute');
   document.getElementById('executeCodeZone').innerHTML = '';
@@ -3570,26 +3587,48 @@ function openExecuteScreen(){
   document.getElementById('executeHelpZone').innerHTML = helpBoxHTML('execute');
   state.translation = { targetLang:'', autoCode:'', studentCode:'', mistakes:[], correction:'', finalCode:'' };
 
-  /* Reconstruit la liste à partir de TOUS les cours du projet (pas seulement celui en
-     cours), pour que l'assemblage reflète bien tout l'historique réel, même après un
-     rechargement de page ou une nouvelle connexion. */
-  state.projectCodeLog = [];
-  state.courses.forEach(function(c){
-    (c.exercises || []).forEach(function(ex){
-      if(ex.correction){ state.projectCodeLog.push({ source: c.name + ' — Exercice: ' + ex.level, code: ex.correction }); }
-    });
-    (c.pieces || []).forEach(function(p){
-      state.projectCodeLog.push({ source: c.name + ' — Code Craft', code: p.code });
-    });
-  });
-
-  const hasDesign = !!state.design.sampleCode;
-  const inventoryLines = state.projectCodeLog.map(function(p){ return '✓ ' + p.source; });
-  inventoryLines.push(hasDesign ? '✓ Design (' + (state.design.validated ? 'validé' : 'proposition non validée') + ')' : '✗ Aucun design ajouté pour cette pièce');
-  document.getElementById('executeInventoryZone').innerHTML = '<div class="statement-box" style="margin-bottom:10px;"><strong>Ce qui va être inclus dans l\'assemblage :</strong><br>' + inventoryLines.map(escapeHTML).join('<br>') + '</div>';
-  if(!hasDesign){
-    document.getElementById('executeInventoryZone').innerHTML += '<div class="locked-msg">Aucun design n\'a été généré pour cette pièce — le programme sera assemblé sans lui. <button class="btn-blue btn-small" style="width:auto; margin-left:6px;" onclick="showScreen(\'screen-codecraft\')">Retourner ajouter un design</button></div>';
+  state.assemblyItems = collectAssemblyItems();
+  const zone = document.getElementById('executeInventoryZone');
+  if(!state.assemblyItems.length){
+    zone.innerHTML = '<div class="locked-msg">Aucune pièce Code Craft pour l\'instant. Fais d\'abord un Code Craft dans un de tes cours (bouton « Correction »), elle apparaîtra ici.</div>';
+    return;
   }
+  /* Regroupe par cours ; RIEN n'est coché d'office, l'élève choisit */
+  let html = '<div class="statement-box" style="margin-bottom:10px;">' +
+    '<div class="row-gap" style="justify-content:space-between; align-items:center; margin-bottom:6px;">' +
+    '<strong>Choisis les pièces à assembler :</strong>' +
+    '<button class="btn-outline btn-small" id="assemblyToggleAll" style="width:auto;" onclick="toggleAllAssemblyItems()">Tout sélectionner</button>' +
+    '</div>';
+  let lastCourse = null;
+  state.assemblyItems.forEach(function(it, i){
+    if(it.course !== lastCourse){
+      html += '<div style="font-weight:700; font-size:12.5px; color:var(--text-muted); margin:10px 0 4px;">' + escapeHTML(it.course) + '</div>';
+      lastCourse = it.course;
+    }
+    const preview = it.statement ? (it.statement.length > 110 ? it.statement.slice(0, 110) + '…' : it.statement) : 'Pièce de code';
+    html += '<label style="display:flex; align-items:flex-start; gap:8px; padding:8px 10px; background:var(--content-white); border-radius:6px; margin-bottom:6px; cursor:pointer;">' +
+      '<input type="checkbox" class="assemblyCheck" value="' + i + '" onchange="updateAssemblyToggleLabel()" style="margin-top:3px;">' +
+      '<span style="flex:1;">' + escapeHTML(preview) +
+      '<details style="margin-top:4px;" onclick="event.stopPropagation();"><summary style="font-size:11px; color:var(--text-muted); cursor:pointer;">voir le code</summary>' +
+      '<pre style="white-space:pre-wrap; font-size:11px; max-height:160px; overflow:auto; margin:4px 0 0;">' + escapeHTML(it.code) + '</pre></details></span></label>';
+  });
+  html += '</div>';
+  zone.innerHTML = html;
+}
+
+function toggleAllAssemblyItems(){
+  const checks = document.querySelectorAll('.assemblyCheck');
+  const allChecked = Array.prototype.every.call(checks, function(cb){ return cb.checked; });
+  checks.forEach(function(cb){ cb.checked = !allChecked; });
+  updateAssemblyToggleLabel();
+}
+
+function updateAssemblyToggleLabel(){
+  const btn = document.getElementById('assemblyToggleAll');
+  if(!btn) return;
+  const checks = document.querySelectorAll('.assemblyCheck');
+  const allChecked = checks.length > 0 && Array.prototype.every.call(checks, function(cb){ return cb.checked; });
+  btn.textContent = allChecked ? 'Tout désélectionner' : 'Tout sélectionner';
 }
 
 async function runAssembly(){
@@ -3597,8 +3636,15 @@ async function runAssembly(){
   const extraDesign = document.getElementById('executeExtraDesign').value.trim();
   loading.innerHTML = '<div class="loading"><div class="spinner"></div>Assemblage de ton programme complet...</div>';
 
-  const validatedPieces = state.projectCodeLog.map(function(p){ return '// ' + p.source + '\n' + p.code; }).join('\n\n');
-  const designPiece = state.design.validated ? ('// Design\n' + (state.design.correction || state.design.sampleCode)) : (state.design.sampleCode ? ('// Design (exemple)\n' + state.design.sampleCode) : '');
+  const checks = Array.prototype.slice.call(document.querySelectorAll('.assemblyCheck:checked'));
+  const selected = checks.map(function(cb){ return (state.assemblyItems || [])[parseInt(cb.value, 10)]; }).filter(Boolean);
+  if(!selected.length){
+    loading.innerHTML = '<div class="feedback-card">Coche au moins une pièce Code Craft à assembler.</div>';
+    return;
+  }
+  state.lastAssemblySelection = selected.map(function(p){ return p.source; });
+  const validatedPieces = selected.map(function(p){ return '// ' + p.source + '\n' + p.code; }).join('\n\n');
+  const designPiece = '';
   const extraDesignPiece = extraDesign ? ('\n\nNouveau design à intégrer en plus (décrit par l\'étudiant, à transformer en code ' + state.language + ' cohérent avec le reste) : ' + extraDesign) : '';
 
   const system = 'Tu es un ingénieur pédagogique qui assemble plusieurs morceaux de code ' + state.language + ' écrits séparément par un étudiant débutant en un seul programme complet, cohérent, avec un point d\'entrée unique qui relie toutes les fonctions logiquement. Réponds UNIQUEMENT avec le code final, sans explication, sans balises markdown.';
