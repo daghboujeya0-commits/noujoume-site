@@ -230,6 +230,12 @@
     .sidebar{width:auto; flex-direction:row; flex-wrap:wrap;}
     .qa-row, .course-row{grid-template-columns:1fr;}
   }
+  .web-tabs{ display:flex; gap:8px; }
+  .web-tab{ flex:1; padding:12px 8px; border:none; border-radius:8px 8px 0 0; background:var(--sidebar-lavender); color:var(--text-dark);
+    font-family:'Playfair Display',serif; font-weight:700; font-size:15px; cursor:pointer; }
+  .web-tab.active{ background:var(--pink-1); color:#fff; }
+  .web-label{ font-size:12px; color:var(--text-muted); font-weight:600; display:block; margin-top:10px; }
+  .web-fiche-item{ background:#f4f0f6; border-radius:8px; padding:10px 12px; margin-bottom:8px; }
 </style>
 </head>
 <body>
@@ -355,7 +361,7 @@
           <div class="qa-input">
             <select id="qLang">
               <option value="Algorithme">Algorithme (pseudocode — la base)</option>
-              <option>C</option><option>Python</option><option>Java</option><option>C++</option><option>JavaScript</option>
+              <option>C</option><option>Python</option><option>Java</option><option>C++</option><option value="HTML / CSS / JavaScript">HTML / CSS / JavaScript</option>
             </select>
           </div>
         </div>
@@ -596,6 +602,13 @@
       <div class="screen" id="screen-course-detail">
         <button class="back-link" onclick="goTree()">← Retour à l'arbre</button>
         <div id="courseDetailContent"></div>
+      </div>
+
+      <!-- MODE WEB : HTML / CSS / JS -->
+      <div class="screen" id="screen-web">
+        <span class="day-label" id="dayLabelWeb">Jour Num: 1</span>
+        <div class="web-tabs" id="webTabs"></div>
+        <div id="webPane"></div>
       </div>
 
       <!-- STOP -->
@@ -864,6 +877,7 @@ async function getDocWithRetry(path, attempts){
 /* Reprend directement là où l'étudiant en était : sur les exercices s'il a un cours pas
    encore terminé, sinon sur la page pour ajouter un nouveau cours. */
 async function goToWhereverStudentLeftOff(){
+  if(isWebProject()){ openWebWorkspace(); return; }
   const inProgressCourse = state.courses.find(function(c){ return c.inProgress; });
   if(inProgressCourse){
     document.getElementById('courseNameInput').value = inProgressCourse.name;
@@ -2108,6 +2122,7 @@ async function confirmBearName(){
 
 let screenHistory = [];
 function showScreen(id, fromBack, fromPopstate){
+  if(id === 'screen-day' && state.currentProjectId && isWebProject()){ return openWebWorkspace(); }
   const current = document.querySelector('.screen.active');
   if(!fromBack && current && current.id !== id){ screenHistory.push(current.id); }
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
@@ -2256,7 +2271,7 @@ const LANG_INFO = [
   { name:'Algorithme (pseudocode)', usage:"La base de tout. Ce n'est pas un vrai langage exécutable : c'est la logique écrite en français structuré, avant de la traduire dans un vrai langage. Idéal pour comprendre le raisonnement sans se battre avec la syntaxe.",
     design:"Pas de design directement — c'est une étape de réflexion. Noujoume te permet ensuite de traduire ton algorithme dans le langage de ton choix, et le design se fait à ce moment-là.",
     install:"Aucune installation : traduis d'abord vers un vrai langage, puis suis les instructions de ce langage-là." },
-  { name:'C', usage:"Langage bas niveau enseigné en 1ère année, très formateur pour comprendre la mémoire et la logique pure. Souvent utilisé pour des programmes console, systèmes, ou embarqué.",
+  { name:'C', usage:"Langage bas niveau souvent enseigné en début de cursus, très formateur pour comprendre la mémoire et la logique pure. Souvent utilisé pour des programmes console, systèmes, ou embarqué.",
     design:"En console (texte, couleurs ANSI, barres de progression) sans rien installer. Pour un vrai décor graphique (fenêtres, formes, sprites), il faut une bibliothèque graphique en plus.",
     install:"Bibliothèque recommandée : SDL2 — open source, gratuite, maintenue depuis 20+ ans, utilisée par de vrais studios de jeux (Valve, etc.). Télécharge-la uniquement depuis le site officiel libsdl.org. Sur Code::Blocks : Réglages → Compilateur → onglet \"Search directories\" pour ajouter les dossiers include/lib de SDL2, puis \"Linker settings\" pour ajouter les .lib. De nombreux tutoriels \"SDL2 Code::Blocks\" détaillent la config pas à pas. Alternative plus simple mais plus ancienne, parfois utilisée dans les cours d'Afrique francophone : WinBGIm (graphics.h)." },
   { name:'Python', usage:"Langage simple à lire, très utilisé pour l'apprentissage, la data, l'automatisation, et les scripts rapides.",
@@ -2268,8 +2283,8 @@ const LANG_INFO = [
   { name:'C++', usage:"Comme le C mais avec la programmation orientée objet en plus, utilisé pour les jeux vidéo professionnels, les moteurs graphiques, les logiciels performants.",
     design:"Nativement en console, comme le C. Pour un vrai rendu graphique, une bibliothèque externe est nécessaire.",
     install:"Bibliothèque recommandée : SFML — open source, réputée pour être plus simple à prendre en main que SDL2, très utilisée en école d'ingénieur. Télécharge uniquement depuis le site officiel sfml-dev.org, qui propose des packages prêts pour Code::Blocks avec instructions détaillées." },
-  { name:'JavaScript', usage:"Le langage du web, utilisé pour tout ce qui tourne dans un navigateur : sites interactifs, animations, petits jeux en ligne.",
-    design:"C'est le seul langage ici où Noujoume peut te montrer une vraie animation en direct dans la page (via Canvas ou le DOM) — le plus proche visuellement d'un jeu qu'on installe, sans bibliothèque externe nécessaire.",
+  { name:'HTML / CSS / JavaScript', usage:"Le trio du web : HTML construit la structure de la page, CSS la met en forme, JavaScript la rend interactive. Tu travailles en 3 onglets, avec un seul code par partie que tu enrichis cours après cours.",
+    design:"Noujoume exécute ton code en direct sous tes yeux (aperçu intégré) : tu vois ta page se construire au fur et à mesure, sans rien installer.",
     install:"Rien à installer : Canvas et le DOM sont intégrés à tous les navigateurs modernes." }
 ];
 
@@ -2518,6 +2533,311 @@ function finishOnboarding(){
   } else {
     updateBearSVG('bearIntroSvg', 'idle');
     showScreen('screen-bear-intro');
+  }
+}
+
+/* ===================================================================
+   MODE HTML / CSS / JavaScript : 3 onglets (HTML, CSS, JS), un seul code par partie
+   que l'étudiant enrichit cours après cours. Correction + exécution en direct.
+   =================================================================== */
+const WEB_LANG = 'HTML / CSS / JavaScript';
+const WEB_PARTS = [
+  { key:'html', label:'HTML', icon:'🧱', hint:"Écris ton HTML ici. À chaque nouveau cours, ajoute les nouvelles balises à la suite de ton code existant." },
+  { key:'css',  label:'CSS',  icon:'🎨', hint:"Le CSS s'applique à TON HTML (onglet HTML) : utilise ses balises, ses classes et ses id. Ajoute tes nouvelles règles à la suite." },
+  { key:'js',   label:'JavaScript', icon:'⚡', hint:"Le JavaScript agit sur ton HTML et ton CSS : sélectionne leurs éléments et fais-les réagir. Ajoute ton nouveau code à la suite." }
+];
+let webActiveTab = 'html';
+let webSaveTimer = null;
+
+function isWebProject(){ return state.language === WEB_LANG; }
+
+function getWeb(){
+  const p = getCurrentProject();
+  if(!p) return null;
+  if(!p.web) p.web = {};
+  WEB_PARTS.forEach(function(part){
+    if(!p.web[part.key]) p.web[part.key] = {};
+    const w = p.web[part.key];
+    if(typeof w.code !== 'string') w.code = '';
+    if(typeof w.validatedCode !== 'string') w.validatedCode = '';
+    if(typeof w.draftName !== 'string') w.draftName = '';
+    if(typeof w.draftResume !== 'string') w.draftResume = '';
+    if(!Array.isArray(w.fiche)) w.fiche = [];
+  });
+  return p.web;
+}
+
+function webScheduleSave(){
+  clearTimeout(webSaveTimer);
+  webSaveTimer = setTimeout(function(){ saveProjects(); }, 1500);
+}
+function webSaveNow(){ clearTimeout(webSaveTimer); return saveProjects(); }
+
+function openWebWorkspace(){
+  const d = document.getElementById('dayLabel');
+  const dw = document.getElementById('dayLabelWeb');
+  if(d && dw) dw.textContent = d.textContent;
+  renderWeb();
+  showScreen('screen-web');
+}
+
+function switchWebTab(key){
+  syncWebFields();
+  webActiveTab = key;
+  webSaveNow();
+  renderWeb();
+}
+
+function syncWebFields(){
+  const w = getWeb(); if(!w) return;
+  const part = w[webActiveTab];
+  const c = document.getElementById('webCode');
+  const n = document.getElementById('webCourseName');
+  const r = document.getElementById('webCourseResume');
+  if(c) part.code = c.value;
+  if(n) part.draftName = n.value;
+  if(r) part.draftResume = r.value;
+}
+function webFieldChange(){ syncWebFields(); webScheduleSave(); }
+
+function webCodeKey(e){
+  if(e.key === 'Tab'){
+    e.preventDefault();
+    const t = e.target, s = t.selectionStart;
+    t.value = t.value.slice(0, s) + '  ' + t.value.slice(t.selectionEnd);
+    t.selectionStart = t.selectionEnd = s + 2;
+    webFieldChange();
+  }
+}
+
+function renderWeb(){
+  const w = getWeb(); if(!w) return;
+  const k = webActiveTab;
+  const meta = WEB_PARTS.filter(function(p){ return p.key === k; })[0];
+  const part = w[k];
+  document.getElementById('webTabs').innerHTML = WEB_PARTS.map(function(p){
+    return '<button class="web-tab' + (p.key === k ? ' active' : '') + '" onclick="switchWebTab(\'' + p.key + '\')">' + p.icon + ' ' + p.label + '</button>';
+  }).join('');
+
+  let note = '';
+  if(k !== 'html' && !(w.html.code || '').trim()){
+    note = '<div class="feedback-card">Ton HTML est encore vide : l\'aperçu n\'aura rien à afficher. Commence par l\'onglet HTML.</div>';
+  }
+  const fiche = part.fiche.length
+    ? part.fiche.slice().reverse().map(function(f){
+        return '<details class="web-fiche-item"><summary><strong>' + escapeHTML(f.name) + '</strong> <span class="subtitle">— ' + escapeHTML(f.date || '') + '</span></summary>' +
+          (f.resume ? '<div class="subtitle" style="white-space:pre-wrap; margin-top:6px;">' + escapeHTML(f.resume) + '</div>' : '') + '</details>';
+      }).join('')
+    : '<div class="subtitle">Aucun cours dans ta fiche ' + meta.label + ' pour l\'instant. Chaque cours validé s\'y ajoute automatiquement.</div>';
+
+  document.getElementById('webPane').innerHTML =
+    '<div id="webTimerZone"></div>' +
+    '<p class="subtitle">' + meta.hint + '</p>' + note +
+    '<label class="web-label">Cours du jour (nom)</label>' +
+    '<input type="text" id="webCourseName" placeholder="ex: les balises de titre et de liste" oninput="webFieldChange()">' +
+    '<label class="web-label">Nouvelles commandes vues / résumé du cours (optionnel, aide la correction)</label>' +
+    '<textarea id="webCourseResume" style="min-height:90px;" placeholder="Colle ou écris ici ce que tu viens d\'apprendre..." oninput="webFieldChange()"></textarea>' +
+    '<label class="web-label">Ton code ' + meta.label + ' (un seul code, ajoute à la suite)</label>' +
+    '<textarea id="webCode" spellcheck="false" style="min-height:320px; font-family:\'Courier New\',monospace; font-size:13px;" placeholder="Écris ton code ' + meta.label + ' ici..." oninput="webFieldChange()" onkeydown="webCodeKey(event)"></textarea>' +
+    '<div class="row-gap">' +
+      '<button class="btn-pink" onclick="correctWeb()">Correction</button>' +
+      '<button class="btn-blue" style="width:auto;" onclick="runWebPreview()">▶ Exécuter</button>' +
+      '<button class="btn-outline" style="width:auto;" onclick="suggestWebTasks()">💡 Proposer des tâches</button>' +
+    '</div>' +
+    '<div id="webFeedback"></div><div id="webPreview"></div><div id="webTasks"></div>' +
+    '<h3 style="margin-top:22px;">📚 Ma fiche ' + meta.label + '</h3>' +
+    '<div id="webFiche">' + fiche + '</div>';
+
+  document.getElementById('webCourseName').value = part.draftName;
+  document.getElementById('webCourseResume').value = part.draftResume;
+  document.getElementById('webCode').value = part.code;
+  renderTimerPanel('webTimerZone');
+}
+
+/* ---------- Vérifications locales (gratuites, avant d'appeler l'IA) ---------- */
+function webLocalCheck(k, code){
+  const issues = [];
+  if(k === 'js'){
+    try{ new Function(code); }
+    catch(e){ issues.push('Erreur de syntaxe JavaScript : ' + e.message); }
+  }
+  if(k === 'css'){
+    let depth = 0, neg = false;
+    for(let i = 0; i < code.length; i++){
+      if(code[i] === '{') depth++;
+      else if(code[i] === '}'){ depth--; if(depth < 0){ neg = true; break; } }
+    }
+    if(neg) issues.push('Il y a une accolade fermante } en trop.');
+    else if(depth > 0) issues.push('Il manque ' + depth + ' accolade(s) fermante(s) }.');
+  }
+  if(k === 'html'){
+    const voids = ['area','base','br','col','embed','hr','img','input','link','meta','param','source','track','wbr'];
+    const clean = code.replace(/<script[\s\S]*?<\/script>/gi, '<scr' + 'ipt></scr' + 'ipt>').replace(/<style[\s\S]*?<\/style>/gi, '<style></style>');
+    const re = /<!--[\s\S]*?-->|<(\/?)([a-zA-Z][a-zA-Z0-9-]*)\b[^>]*?(\/?)>/g;
+    const stack = []; let m, mismatch = false;
+    while((m = re.exec(clean)) !== null){
+      if(m[0].indexOf('<!--') === 0) continue;
+      const tag = m[2].toLowerCase();
+      if(m[1] === '/'){
+        if(stack.length && stack[stack.length - 1] === tag) stack.pop();
+        else if(!mismatch){ issues.push('La balise fermante </' + tag + '> ne correspond à aucune balise ouverte (ou elle est mal placée).'); mismatch = true; }
+      } else if(voids.indexOf(tag) === -1 && m[3] !== '/'){
+        stack.push(tag);
+      }
+    }
+    if(!mismatch && stack.length){
+      issues.push('Balise(s) jamais fermée(s) : ' + stack.map(function(t){ return '<' + t + '>'; }).join(', ') + '.');
+    }
+  }
+  return issues;
+}
+
+/* Partie ajoutée depuis la dernière validation (pour que l'IA se concentre dessus) */
+function webNewPart(part){
+  const v = part.validatedCode || '';
+  if(v && part.code.indexOf(v) === 0) return part.code.slice(v.length).trim();
+  return '';
+}
+
+function webContextForAI(k, w){
+  let ctx = '';
+  if(k !== 'html' && w.html.code.trim()) ctx += 'HTML actuel de l\'étudiant :\n"""' + w.html.code.slice(0, 5000) + '"""\n';
+  if(k === 'js' && w.css.code.trim()) ctx += 'CSS actuel de l\'étudiant :\n"""' + w.css.code.slice(0, 3000) + '"""\n';
+  return ctx;
+}
+
+async function correctWeb(){
+  syncWebFields();
+  const w = getWeb(); if(!w) return;
+  const k = webActiveTab, part = w[k];
+  const meta = WEB_PARTS.filter(function(p){ return p.key === k; })[0];
+  const zone = document.getElementById('webFeedback');
+  if(!part.code.trim()){ zone.innerHTML = '<div class="feedback-card">Écris d\'abord un peu de code dans la zone ci-dessus.</div>'; return; }
+
+  const local = webLocalCheck(k, part.code);
+  if(local.length){
+    zone.innerHTML = '<div class="feedback-card"><strong>Avant la correction, un petit souci à régler :</strong><ul>' +
+      local.map(function(i){ return '<li>' + escapeHTML(i) + '</li>'; }).join('') + '</ul></div>';
+    return;
+  }
+
+  zone.innerHTML = '<div class="loading"><div class="spinner"></div>Correction en cours...</div>';
+  const system = 'Tu es un assistant pédagogique qui corrige du code ' + meta.label + ' écrit par un étudiant en informatique. ' +
+    'Tu réponds UNIQUEMENT en JSON valide, sans texte avant ni après, en français simple et bienveillant.';
+  const newPart = webNewPart(part);
+  const user = 'Projet de l\'étudiant : "' + state.projectIdea + '" (domaine : ' + state.domain + ').\n' +
+    'Partie corrigée : ' + meta.label + '.\n' +
+    (part.draftName ? 'Cours du jour : "' + part.draftName + '".\n' : '') +
+    (part.draftResume ? 'Commandes vues / résumé : """' + part.draftResume + '"""\n' : '') +
+    webContextForAI(k, w) +
+    'Code ' + meta.label + ' complet de l\'étudiant :\n"""' + part.code.slice(0, 12000) + '"""\n' +
+    (newPart ? 'Partie ajoutée depuis la dernière validation (à vérifier en priorité) :\n"""' + newPart.slice(0, 6000) + '"""\n' : '') +
+    '\nRègles : l\'étudiant écrit UN SEUL code qu\'il enrichit cours après cours. Il n\'est PAS obligé d\'avoir utilisé toutes les notions : juge uniquement si ce qui est écrit est CORRECT (syntaxe, bon usage des commandes, cohérence avec le HTML/CSS existants). ' +
+    'Ne réclame jamais de fonctionnalité manquante. Ne donne pas le code corrigé en entier : explique chaque erreur avec un indice, et au plus un petit exemple d\'une ligne. ' +
+    'Si tout est correct, "ok" vaut true et "errors" est vide.\n' +
+    'Réponds avec ce JSON exact :\n{"ok":true,"summary":"une phrase","errors":[{"where":"ligne ou extrait concerné","problem":"ce qui ne va pas","hint":"indice pour corriger"}]}';
+
+  try{
+    const raw = await callClaude(system, user);
+    const r = safeParseJSON(raw);
+    const errors = Array.isArray(r.errors) ? r.errors : [];
+    const ok = r.ok === true && errors.length === 0;
+    let html;
+    if(ok){
+      part.validatedCode = part.code;
+      if(part.draftName.trim()){
+        part.fiche.push({ name: part.draftName.trim(), resume: part.draftResume.trim(), date: new Date().toLocaleDateString('fr-FR') });
+        part.draftName = ''; part.draftResume = '';
+        state.dayNum += 1; state.streak += 1;
+        saveProfileToFirestore({ dayNum: state.dayNum, streak: state.streak });
+        updateDayLabels();
+        try{ checkAndAwardBadges(); }catch(e){ console.error(e); }
+      }
+      html = '<div class="feedback-card ok"><strong>✅ Ton code ' + meta.label + ' est correct !</strong><br>' + escapeHTML(r.summary || 'Bravo, continue comme ça.') + '</div>';
+      try{ bearSay(getBearLines('success') || ['Bravo !'], 'happy', 4000); }catch(e){}
+    } else {
+      html = '<div class="feedback-card"><strong>À corriger :</strong>' + (r.summary ? '<br>' + escapeHTML(r.summary) : '') + '<ul>' +
+        errors.map(function(e){
+          return '<li><strong>' + escapeHTML(e.where || '') + '</strong> — ' + escapeHTML(e.problem || '') +
+            (e.hint ? '<br><em>Indice : ' + escapeHTML(e.hint) + '</em>' : '') + '</li>';
+        }).join('') + '</ul></div>';
+    }
+    await webSaveNow();
+    if(webActiveTab === k){
+      if(ok){ renderWeb(); }
+      document.getElementById('webFeedback').innerHTML = html;
+    }
+  }catch(err){
+    console.error(err);
+    if(webActiveTab === k) document.getElementById('webFeedback').innerHTML = friendlyErrorHTML(err, 'La correction n\'a pas pu se faire. Réessaie dans un instant.');
+  }
+}
+
+/* ---------- Exécution en direct (iframe isolé) ---------- */
+function webBuildDoc(k){
+  const w = getWeb();
+  const html = w.html.code || '';
+  const css = (k === 'css' || k === 'js') ? (w.css.code || '') : '';
+  const js = (k === 'js') ? (w.js.code || '') : '';
+  let doc = html;
+  if(!/<html[\s>]/i.test(doc)){
+    doc = '<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body>' + doc + '</body></html>';
+  }
+  if(css){
+    const st = '<style>' + css.replace(/<\/style/gi, '<\\/style') + '</style>';
+    doc = /<\/head>/i.test(doc) ? doc.replace(/<\/head>/i, function(){ return st + '</head>'; }) : st + doc;
+  }
+  if(js){
+    const sc = '<scr' + 'ipt>' + js.replace(/<\/script/gi, '<\\/script') + '<\/scr' + 'ipt>';
+    doc = /<\/body>/i.test(doc) ? doc.replace(/<\/body>/i, function(){ return sc + '</body>'; }) : doc + sc;
+  }
+  return doc;
+}
+
+function runWebPreview(){
+  syncWebFields();
+  const k = webActiveTab;
+  const zone = document.getElementById('webPreview');
+  const w = getWeb();
+  if(!w.html.code.trim()){ zone.innerHTML = '<div class="feedback-card">Rien à exécuter : ton HTML est vide.</div>'; return; }
+  const local = webLocalCheck(k, w[k].code);
+  const warn = local.length ? '<div class="feedback-card">⚠️ ' + escapeHTML(local[0]) + ' (l\'aperçu peut être incomplet)</div>' : '';
+  zone.innerHTML = warn + '<h3 style="margin:14px 0 6px;">Aperçu</h3>';
+  const iframe = document.createElement('iframe');
+  iframe.className = 'code-preview-frame';
+  iframe.setAttribute('sandbox', 'allow-scripts allow-modals');
+  iframe.srcdoc = webBuildDoc(k);
+  zone.appendChild(iframe);
+}
+
+/* ---------- Tâches proposées (facultatives, non corrigées) ---------- */
+async function suggestWebTasks(){
+  syncWebFields();
+  const w = getWeb(); if(!w) return;
+  const k = webActiveTab, part = w[k];
+  const meta = WEB_PARTS.filter(function(p){ return p.key === k; })[0];
+  const zone = document.getElementById('webTasks');
+  const last = part.fiche.length ? part.fiche[part.fiche.length - 1] : null;
+  const topic = part.draftName.trim() || (last ? last.name : '');
+  if(!topic && !part.code.trim()){ zone.innerHTML = '<div class="feedback-card">Indique le cours du jour ou écris un peu de code pour que je propose des tâches adaptées.</div>'; return; }
+  zone.innerHTML = '<div class="loading"><div class="spinner"></div>Je cherche des idées de tâches...</div>';
+  const system = 'Tu es un assistant pédagogique. Tu réponds UNIQUEMENT en JSON valide, sans texte avant ni après, en français.';
+  const user = 'Domaine préféré de l\'étudiant : "' + state.domain + '". Projet : "' + state.projectIdea + '".\n' +
+    'Partie : ' + meta.label + '.\n' + (topic ? 'Cours / notion vue : "' + topic + '".\n' : '') +
+    (part.draftResume ? 'Commandes vues : """' + part.draftResume + '"""\n' : '') +
+    'Fin de son code ' + meta.label + ' actuel :\n"""' + part.code.slice(-2500) + '"""\n\n' +
+    'Propose 3 petites tâches à pratiquer, de difficulté croissante, liées UNIQUEMENT à ce qu\'il vient de voir et à son projet. Pas de solution, pas de code complet. L\'étudiant n\'est pas obligé de les faire.\n' +
+    'JSON exact : {"tasks":[{"title":"...","description":"..."}]}';
+  try{
+    const raw = await callClaude(system, user);
+    const r = safeParseJSON(raw);
+    const tasks = Array.isArray(r.tasks) ? r.tasks : [];
+    if(webActiveTab !== k) return;
+    document.getElementById('webTasks').innerHTML = '<div class="feedback-card ok"><strong>💡 Idées de tâches</strong> <span class="subtitle">(facultatif — rien n\'est corrigé ici)</span><ol>' +
+      tasks.map(function(t){ return '<li><strong>' + escapeHTML(t.title || '') + '</strong><br>' + escapeHTML(t.description || '') + '</li>'; }).join('') + '</ol></div>';
+  }catch(err){
+    console.error(err);
+    if(webActiveTab === k) document.getElementById('webTasks').innerHTML = friendlyErrorHTML(err, 'Impossible de proposer des tâches pour le moment.');
   }
 }
 
@@ -2854,7 +3174,73 @@ async function saveCourseNotes(idx){
   }
 }
 
+/* ---------- ARBRE DE COMPÉTENCES (mode HTML / CSS / JavaScript) : 3 feuilles ---------- */
+const WEB_LEAF_COLORS = { html:'#f4a75c', css:'#4a90d9', js:'#d9a400' };
+
+function setTreeWebMode(on){
+  const scr = document.getElementById('screen-tree');
+  if(!scr) return;
+  const sub = scr.querySelector('.subtitle');
+  if(sub) sub.textContent = on
+    ? 'Ton arbre a trois feuilles : HTML, CSS et JavaScript. Clique sur une feuille pour retourner coder dans cette partie.'
+    : 'Chaque feuille est un cours ajouté, avec sa propre couleur. Clique sur une feuille pour revoir son détail.';
+  const story = scr.querySelector('button[onclick*="treeStoryZone"]');
+  if(story && story.parentElement) story.parentElement.style.display = on ? 'none' : '';
+  const list = scr.querySelector('button[onclick*="goCourses"]');
+  if(list) list.style.display = on ? 'none' : '';
+  const add = scr.querySelector('button[onclick*="screen-day"]');
+  if(add) add.textContent = on ? '✏️ Continuer à coder' : '+ Ajouter un nouveau cours';
+}
+
+function openWebFromTree(key){
+  webActiveTab = key;
+  openWebWorkspace();
+}
+
+function renderWebTree(){
+  const zone = document.getElementById('treeContainer');
+  const w = getWeb();
+  if(!w){ zone.innerHTML = ''; return; }
+  const width = 320, height = 360, trunkX = width/2, trunkBottom = height - 20, trunkTop = 50;
+  const spots = [ { key:'html', y:280, side:-1 }, { key:'css', y:210, side:1 }, { key:'js', y:140, side:-1 } ];
+
+  let svg = '<svg width="' + width + '" height="' + height + '" viewBox="0 0 ' + width + ' ' + height + '" xmlns="http://www.w3.org/2000/svg">';
+  svg += '<ellipse cx="' + trunkX + '" cy="' + trunkBottom + '" rx="50" ry="8" fill="#e5dcb8" opacity="0.6"/>';
+  svg += '<path d="M' + (trunkX-9) + ' ' + trunkBottom + ' Q' + (trunkX-6) + ' ' + ((trunkBottom+trunkTop)/2) + ' ' + (trunkX-4) + ' ' + trunkTop +
+         ' L' + (trunkX+4) + ' ' + trunkTop + ' Q' + (trunkX+6) + ' ' + ((trunkBottom+trunkTop)/2) + ' ' + (trunkX+9) + ' ' + trunkBottom + ' Z" fill="#b98d5e" stroke="#7a5c3a" stroke-width="1.5"/>';
+  svg += '<circle cx="' + trunkX + '" cy="' + (trunkTop-10) + '" r="34" fill="#c9e6c2" opacity="0.5"/>';
+
+  spots.forEach(function(sp){
+    const part = w[sp.key];
+    const meta = WEB_PARTS.filter(function(p){ return p.key === sp.key; })[0];
+    const started = part.fiche.length > 0 || part.code.trim().length > 0;
+    const leafX = trunkX + sp.side * 78, leafY = sp.y - 24, color = WEB_LEAF_COLORS[sp.key];
+    svg += '<path d="M' + trunkX + ' ' + sp.y + ' Q' + (trunkX + sp.side*40) + ' ' + (sp.y-14) + ' ' + leafX + ' ' + (sp.y-18) + '" stroke="#8a6b45" stroke-width="3" fill="none" stroke-linecap="round"/>';
+    svg += '<g style="cursor:pointer;" opacity="' + (started ? 1 : 0.45) + '" onclick="openWebFromTree(\'' + sp.key + '\')">' +
+      '<ellipse cx="' + leafX + '" cy="' + leafY + '" rx="34" ry="24" fill="' + color + '" stroke="#2c1830" stroke-width="1.6" transform="rotate(' + (sp.side*20) + ' ' + leafX + ' ' + leafY + ')"/>' +
+      '<text x="' + leafX + '" y="' + (leafY+4) + '" text-anchor="middle" font-size="' + (sp.key === 'js' ? 11 : 13) + '" fill="#fff" font-weight="700">' + (sp.key === 'js' ? 'JS' : meta.label) + '</text>' +
+      '<text x="' + leafX + '" y="' + (leafY+40) + '" text-anchor="middle" font-size="10" fill="#6b5a6e">' + part.fiche.length + ' cours</text>' +
+      '</g>';
+  });
+  svg += '</svg>';
+
+  zone.innerHTML = '<div style="text-align:center;">' + svg +
+    '<div class="subtitle" style="margin-top:8px;">' + spots.map(function(sp){
+      const part = w[sp.key];
+      const meta = WEB_PARTS.filter(function(p){ return p.key === sp.key; })[0];
+      const lines = part.code.trim() ? part.code.split('\n').length : 0;
+      return '<span style="display:inline-block; margin:2px 8px; cursor:pointer;" onclick="openWebFromTree(\'' + sp.key + '\')">' +
+        '<span style="display:inline-block; width:10px; height:10px; border-radius:50%; background:' + WEB_LEAF_COLORS[sp.key] + '; margin-right:4px;"></span>' +
+        meta.icon + ' ' + meta.label + ' — ' + part.fiche.length + ' cours · ' + lines + ' ligne' + (lines > 1 ? 's' : '') + '</span>';
+    }).join('') + '</div></div>';
+
+  const assembleZone = document.getElementById('treeAssembleZone');
+  if(assembleZone) assembleZone.innerHTML = '';
+}
+
 function renderTree(){
+  if(state.currentProjectId && isWebProject() && getWeb()){ setTreeWebMode(true); return renderWebTree(); }
+  setTreeWebMode(false);
   const zone = document.getElementById('treeContainer');
   const courses = state.courses;
   const width = 320;
@@ -3170,7 +3556,7 @@ async function generateExercises(){
   const loadingZone = document.getElementById('dayLoading');
   loadingZone.innerHTML = '<div class="loading"><div class="spinner"></div>Génération de tes exercices...</div>';
 
-  const system = 'Tu es un assistant pédagogique pour un étudiant tunisien en 1ère année de faculté d\'informatique, qui apprend le langage ' + state.language + '. Tu réponds UNIQUEMENT en JSON valide, sans texte avant ni après, sans balises markdown.';
+  const system = 'Tu es un assistant pédagogique pour un étudiant en informatique, qui apprend le langage ' + state.language + '. Tu réponds UNIQUEMENT en JSON valide, sans texte avant ni après, sans balises markdown.';
   const resumePart = courseResume ? 'Résumé du cours : """' + courseResume + '"""' : "Le résumé du cours est fourni sous forme d'image ci-jointe — analyse-la pour comprendre le contenu du cours.";
   const userBase = 'Domaine préféré de l\'étudiant : "' + state.domain + '" (' + state.domainDetail + ').\n' +
     'Idée de projet (jeu/app) qu\'il construit petit à petit : "' + state.projectIdea + '".\n' +
