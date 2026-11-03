@@ -545,7 +545,7 @@
       <!-- STATS -->
       <div class="screen" id="screen-projects">
         <h2>🗂️ Mes projets</h2>
-        <p class="subtitle">Choisis le projet sur lequel tu veux avancer, ou commence-en un nouveau.</p>
+        <p class="subtitle">Choisis le projet sur lequel tu veux avancer, ou commence-en un nouveau. Astuce : clic droit (ou appui long sur mobile) sur un projet pour le supprimer.</p>
         <div id="projectsList"></div>
         <div class="cta-center" style="margin-top:14px;"><button class="btn-pink" onclick="startNewProject()">➕ Nouveau projet</button></div>
         <div class="cta-center" style="margin-top:10px;"><button class="btn-outline btn-small" style="width:auto;" onclick="handleLogout()">🚪 Se déconnecter</button></div>
@@ -936,7 +936,7 @@ function renderProjectsList(){
   }
   zone.innerHTML = state.projects.map(function(p){
     const nb = state.allCourses.filter(function(c){ return courseProjectId(c) === p.id; }).length;
-    return '<button class="btn-blue" style="width:100%; text-align:left; margin-bottom:10px; padding:14px 16px;" onclick="openProject(\'' + p.id + '\')">' +
+    return '<button class="btn-blue" style="width:100%; text-align:left; margin-bottom:10px; padding:14px 16px;" onclick="onProjectClick(\'' + p.id + '\')" oncontextmenu="showProjectContextMenu(event, \'' + p.id + '\')" ontouchstart="startProjectLongPress(event, \'' + p.id + '\')" ontouchend="cancelProjectLongPress()" ontouchmove="cancelProjectLongPress()" title="Clic droit pour supprimer">' +
       '<div style="font-size:15px; font-weight:700;">' + escapeHTML(p.title || fallbackProjectTitle(p.projectIdea)) + '</div>' +
       '<div style="font-size:12px; font-weight:400; opacity:0.85; margin-top:3px;">' + escapeHTML(p.domain || '') + ' · ' + escapeHTML(p.language || '') + ' · ' + nb + ' cours</div>' +
       '</button>';
@@ -946,6 +946,119 @@ function renderProjectsList(){
 function goProjects(){
   renderProjectsList();
   showScreen('screen-projects');
+}
+
+/* ---------- COSTUME DE L'OURSON : toujours en phase avec le domaine du projet ---------- */
+var bearCostumeKey = null;
+
+/* Pendant la création d'un projet (écran d'onboarding), l'ourson est neutre :
+   le domaine n'est pas encore choisi, donc pas de costume hérité d'un autre projet. */
+function bearEffectiveDomain(){
+  const ob = document.getElementById('screen-onboarding');
+  if(ob && ob.classList.contains('active')) return '';
+  return state.domain || '';
+}
+
+function refreshBearCostume(){
+  const key = bearEffectiveDomain();
+  if(key === bearCostumeKey) return;
+  bearCostumeKey = key;
+  if(document.getElementById('bearSvgBox')) updateBearSVG('bearSvgBox', bear.mood || 'idle');
+  const intro = document.getElementById('bearIntroSvg');
+  if(intro && intro.innerHTML) updateBearSVG('bearIntroSvg', 'idle');
+}
+
+/* ---------- SUPPRESSION D'UN PROJET (clic droit / appui long sur « Mes projets ») ---------- */
+var projectLongPressTimer = null;
+var projectLongPressFired = false;
+
+function closeProjectContextMenu(){
+  const old = document.getElementById('projectContextMenu');
+  if(old) old.remove();
+}
+
+function showProjectContextMenu(event, pid, px, py){
+  try{ event.preventDefault(); event.stopPropagation(); }catch(e){}
+  closeProjectContextMenu();
+  const p = state.projects.find(function(x){ return x.id === pid; });
+  if(!p) return;
+  let x = (typeof px === 'number') ? px : (event.clientX || window.innerWidth/2);
+  let y = (typeof py === 'number') ? py : (event.clientY || window.innerHeight/2);
+  const menu = document.createElement('div');
+  menu.id = 'projectContextMenu';
+  menu.style.cssText = 'position:fixed; left:' + Math.max(8, Math.min(x, window.innerWidth - 210)) + 'px; top:' + Math.max(8, Math.min(y, window.innerHeight - 90)) + 'px; z-index:1000; ' +
+    'background:#fff; border:1px solid #e0c9d0; border-radius:8px; box-shadow:0 6px 18px rgba(0,0,0,0.2); padding:6px; min-width:190px; font-size:13px;';
+  menu.innerHTML = '<div style="padding:6px 10px; color:var(--text-muted); font-size:11px; border-bottom:1px solid #f0e4e8; margin-bottom:4px; max-width:240px;">' + escapeHTML(p.title || fallbackProjectTitle(p.projectIdea)) + '</div>' +
+    '<div onclick="deleteProject(\'' + pid + '\')" style="padding:8px 10px; cursor:pointer; border-radius:6px; color:#c0392b; font-weight:600;" onmouseover="this.style.background=\'#fdecea\'" onmouseout="this.style.background=\'transparent\'">🗑️ Supprimer le projet</div>';
+  document.body.appendChild(menu);
+  setTimeout(function(){
+    document.addEventListener('click', closeProjectContextMenu, { once: true });
+    document.addEventListener('keydown', function escListener(e){ if(e.key === 'Escape'){ closeProjectContextMenu(); document.removeEventListener('keydown', escListener); } });
+  }, 0);
+}
+
+function startProjectLongPress(event, pid){
+  cancelProjectLongPress();
+  projectLongPressFired = false;
+  const t = event.touches && event.touches[0];
+  const px = t ? t.clientX : undefined, py = t ? t.clientY : undefined;
+  projectLongPressTimer = setTimeout(function(){
+    projectLongPressFired = true;
+    showProjectContextMenu(event, pid, px, py);
+  }, 600);
+}
+function cancelProjectLongPress(){
+  if(projectLongPressTimer){ clearTimeout(projectLongPressTimer); projectLongPressTimer = null; }
+}
+
+/* Un appui long qui a ouvert le menu ne doit pas ouvrir le projet au relâchement */
+function onProjectClick(pid){
+  if(projectLongPressFired){ projectLongPressFired = false; return; }
+  closeProjectContextMenu();
+  openProject(pid);
+}
+
+async function deleteProject(pid){
+  closeProjectContextMenu();
+  const p = state.projects.find(function(x){ return x.id === pid; });
+  if(!p) return;
+  const title = p.title || fallbackProjectTitle(p.projectIdea);
+  const courses = state.allCourses.filter(function(c){ return courseProjectId(c) === pid; });
+  const detail = courses.length === 1 ? ' Son cours (exercices, pièces de code, notes) sera aussi effacé.' : (courses.length ? ' Ses ' + courses.length + ' cours (exercices, pièces de code, notes) seront aussi effacés.' : '');
+  if(!confirm('Supprimer définitivement le projet « ' + title + ' » ?' + detail + ' Cette action ne peut pas être annulée.')) return;
+
+  /* On efface d'abord les cours de ce projet ; si une suppression échoue, on s'arrête
+     sans rien casser (le projet reste, avec les cours qui n'ont pas pu être effacés). */
+  for(let i = 0; i < courses.length; i++){
+    const c = courses[i];
+    try{
+      if(c.id) await firestoreCall('delete', 'users/' + currentUserId + '/courses/' + c.id);
+    }catch(err){
+      console.error('Erreur de suppression du cours', err);
+      showErrorToast('Suppression du projet impossible.', err);
+      renderProjectsList();
+      return;
+    }
+    const k = state.allCourses.indexOf(c);
+    if(k >= 0) state.allCourses.splice(k, 1);
+  }
+
+  state.projects = state.projects.filter(function(x){ return x.id !== pid; });
+  clearTimeout(webSaveTimer);
+  if(state.currentProjectId === pid){
+    state.currentProjectId = null;
+    resetWorkingState();
+    state.domain = ''; state.domainDetail = ''; state.projectIdea = ''; state.language = 'C';
+  }
+
+  /* Si c'était le dernier projet, on vide aussi les anciens champs du profil : sinon, à la
+     prochaine connexion, la migration des « élèves d'avant les projets » le recréerait. */
+  const fields = { projects: state.projects };
+  if(!state.projects.length){ fields.domain = ''; fields.domainDetail = ''; fields.projectIdea = ''; fields.language = 'C'; }
+  await saveProfileToFirestore(fields);
+
+  renderProjectsList();
+  try{ refreshBearCostume(); }catch(e){ console.error(e); }
 }
 
 async function openProject(pid){
@@ -1803,10 +1916,10 @@ const BEAR_SIDE_PROPS = {
 };
 
 function bearAccessoryMarkup(){
-  return BEAR_ACCESSORIES[state.domain] || '';
+  return BEAR_ACCESSORIES[bearEffectiveDomain()] || '';
 }
 function bearSidePropMarkup(){
-  return BEAR_SIDE_PROPS[state.domain] || '';
+  return BEAR_SIDE_PROPS[bearEffectiveDomain()] || '';
 }
 
 function bearSVG(mood){
@@ -2129,6 +2242,7 @@ function showScreen(id, fromBack, fromPopstate){
   document.getElementById(id).classList.add('active');
   window.scrollTo(0,0);
   updateGlobalBackButton();
+  try{ refreshBearCostume(); }catch(e){ console.error(e); }
   /* La barre latérale n'a de sens que dans un projet : masquée sur la page « Mes projets »
      et pendant la création d'un nouveau projet, affichée dans les autres pages. */
   const sbEl = document.getElementById('sidebar');
@@ -3175,7 +3289,7 @@ async function saveCourseNotes(idx){
 }
 
 /* ---------- ARBRE DE COMPÉTENCES (mode HTML / CSS / JavaScript) : 3 feuilles ---------- */
-const WEB_LEAF_COLORS = { html:'#f4a75c', css:'#4a90d9', js:'#d9a400' };
+const WEB_LEAF_COLORS = { html:'#ef6a94', css:'#4a90d9', js:'#9b7bc4' };
 
 function setTreeWebMode(on){
   const scr = document.getElementById('screen-tree');
